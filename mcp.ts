@@ -43,14 +43,14 @@ interface Tool {
 }
 
 const WINDOW_PROPS = {
-  time_min: { type: "string", description: "Window start, RFC3339 with offset: 2026-09-03T00:00:00-03:00" },
+  time_min: { type: "string", description: "Window start, RFC3339 with offset: 2026-09-03T00:00:00+01:00" },
   time_max: { type: "string", description: "Window end, RFC3339 with offset (exclusive)" },
   calendar_ids: {
     type: "array",
     items: { type: "string" },
     description: "Calendar aliases from list_calendars (default: every calendar you can reach)",
   },
-  timezone: { type: "string", description: "IANA timezone for the answer (default: America/Sao_Paulo)" },
+  timezone: { type: "string", description: "IANA timezone for the answer (default: Europe/Lisbon)" },
 }
 
 export const TOOLS: Tool[] = [
@@ -157,7 +157,7 @@ export const TOOLS: Tool[] = [
         },
         description: { type: "string", description: "Event body" },
         location: { type: "string", description: "Where it happens" },
-        timezone: { type: "string", description: "IANA timezone (default: America/Sao_Paulo)" },
+        timezone: { type: "string", description: "IANA timezone (default: Europe/Lisbon)" },
         idempotency_key: {
           type: "string",
           description: "Stable key so a retry does not duplicate the event. Reuse the same key when retrying",
@@ -186,7 +186,7 @@ export const TOOLS: Tool[] = [
         end: { type: "string", description: "New end, RFC3339 with offset. Must come with start" },
         description: { type: "string", description: "New body" },
         location: { type: "string", description: "New location" },
-        timezone: { type: "string", description: "IANA timezone (default: America/Sao_Paulo)" },
+        timezone: { type: "string", description: "IANA timezone (default: Europe/Lisbon)" },
         calendar_ids: {
           type: "array",
           items: { type: "string" },

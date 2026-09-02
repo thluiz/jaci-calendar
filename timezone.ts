@@ -2,10 +2,10 @@
  * timezone.ts — wall clock to instant, without a dependency.
  *
  * Free-slot search is stated in wall-clock terms ("09:00 to 18:00, weekdays"),
- * while busy blocks are instants. Something has to convert between them, and
- * doing it with a fixed -03:00 would be wrong in two ways: other calendars can
- * be in other zones, and Brazil's lack of DST since 2019 is a fact about today,
- * not a property of the code.
+ * while busy blocks are instants. Something has to convert between them, and a
+ * hardcoded offset would be wrong twice over: calendars can sit in different
+ * zones, and the default zone here (Europe/Lisbon) shifts twice a year, so
+ * "09:00" is not a fixed distance from UTC.
  *
  * Everything here goes through Intl, which carries the IANA rules. Pure module.
  */

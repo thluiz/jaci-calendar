@@ -35,7 +35,7 @@ export function loadConfig(): Config {
     saKeyFile: process.env.GOOGLE_SA_KEY_FILE || join(dir, "sa-key.json"),
     calendarsFile: process.env.CALENDARS_FILE || join(dir, "calendars.json"),
     principalsFile: process.env.PRINCIPALS_FILE || join(dir, "principals.json"),
-    defaultTimezone: process.env.DEFAULT_TIMEZONE || "America/Sao_Paulo",
+    defaultTimezone: process.env.DEFAULT_TIMEZONE || "Europe/Lisbon",
     maxWritesPerMin: num("MAX_WRITES_PER_MIN", 10),
     maxWritesPerDay: num("MAX_WRITES_PER_DAY", 50),
     maxPastHours: num("MAX_PAST_HOURS", 24),

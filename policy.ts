@@ -33,7 +33,7 @@ export function parseInstant(value: unknown, field: string): { ms: number } | Po
     return {
       code: "INVALID_INPUT",
       message:
-        `${field} must be RFC3339 with an explicit offset (2026-08-30T14:00:00-03:00) ` +
+        `${field} must be RFC3339 with an explicit offset (2026-08-30T14:00:00+01:00) ` +
         `or a plain date (2026-08-30) for an all-day event`,
       status: 400,
     }
