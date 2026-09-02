@@ -3,8 +3,8 @@ import { buildEventBody, buildPatchBody, planFanout, summarizeFanout } from "./f
 import { eventIdFor, groupIdFor, isValidEventId } from "./idempotency"
 import type { CalendarEntry, EventInput, FanoutResult } from "./types"
 
-const THIAGO: CalendarEntry = { alias: "thiago", id: "thiago@gmail.com", access: "details" }
-const THILIA: CalendarEntry = { alias: "thilia", id: "thilia@gmail.com", access: "details" }
+const THIAGO: CalendarEntry = { alias: "thiago", id: "thiago@example.com", access: "details" }
+const THILIA: CalendarEntry = { alias: "thilia", id: "thilia@example.com", access: "details" }
 
 const INPUT: EventInput = {
   summary: "Jantar",
@@ -105,14 +105,14 @@ describe("buildPatchBody", () => {
 describe("summarizeFanout", () => {
   const ok = (alias: string): FanoutResult => ({
     calendar: alias,
-    calendar_id: `${alias}@gmail.com`,
+    calendar_id: `${alias}@example.com`,
     ok: true,
     created: true,
     event_id: "abc",
   })
   const fail = (alias: string): FanoutResult => ({
     calendar: alias,
-    calendar_id: `${alias}@gmail.com`,
+    calendar_id: `${alias}@example.com`,
     ok: false,
     error: "500 from Google",
   })

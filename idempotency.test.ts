@@ -24,7 +24,7 @@ describe("base32hexEncode", () => {
 
 describe("eventIdFor", () => {
   test("is a valid Google event id", () => {
-    const id = eventIdFor("k1", "thiago@gmail.com")
+    const id = eventIdFor("k1", "thiago@example.com")
     expect(isValidEventId(id)).toBe(true)
     expect(id.length).toBe(32)
   })
