@@ -310,6 +310,9 @@ const CORS = {
 
 const JSON_HEADERS = { ...CORS, "Content-Type": "application/json" }
 
+/** Comfortably under the 120s proxy_read_timeout on the nginx route. */
+const HEARTBEAT_MS = 25_000
+
 export async function handleMCP(
   req: Request,
   principal: Principal | null,
@@ -324,13 +327,43 @@ export async function handleMCP(
     )
   }
 
-  // GET /mcp — minimal SSE keep-alive, for clients that open one.
+  // GET /mcp — SSE keep-alive, for clients that open one.
+  //
+  // The stream stays open and heartbeats. Closing it immediately (as the older
+  // services in this fleet do) makes a client reconnect every few seconds
+  // forever: OpenClaw was reopening it 10 times a minute, which is 14k entries
+  // a day in the agent's access log, drowning the trail that log exists for.
   if (req.method === "GET") {
+    const encoder = new TextEncoder()
+    let timer: ReturnType<typeof setInterval> | undefined
+
     const body = new ReadableStream({
       start(ctrl) {
-        ctrl.enqueue(new TextEncoder().encode(": calendar-gate mcp\n\n"))
+        ctrl.enqueue(encoder.encode(": calendar-gate mcp\n\n"))
+        timer = setInterval(() => {
+          try {
+            ctrl.enqueue(encoder.encode(": keep-alive\n\n"))
+          } catch {
+            // The peer went away between the abort and this tick.
+            if (timer) clearInterval(timer)
+          }
+        }, HEARTBEAT_MS)
+        // Without this the interval outlives the request and leaks a timer per
+        // connection, which over days is worse than the log noise it fixes.
+        req.signal.addEventListener("abort", () => {
+          if (timer) clearInterval(timer)
+          try {
+            ctrl.close()
+          } catch {
+            // already closed
+          }
+        })
+      },
+      cancel() {
+        if (timer) clearInterval(timer)
       },
     })
+
     return new Response(body, {
       headers: { ...CORS, "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
     })
