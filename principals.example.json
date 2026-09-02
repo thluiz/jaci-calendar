@@ -1,0 +1,22 @@
+{
+  "_comment": "One principal per API key. Stores the SHA-256 of the key, never the key. Generate with: KEY=$(openssl rand -hex 32); echo \"key: $KEY\"; printf '%s' \"$KEY\" | sha256sum. 'calendars' entries are aliases from calendars.json (a raw calendar id also resolves).",
+
+  "claude-code-thiago": {
+    "key_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "role": "write",
+    "calendars": ["thiago", "familia"],
+    "description": "Claude Code on the Windows host, acting for Thiago"
+  },
+  "jaci-thilia": {
+    "key_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "role": "write",
+    "calendars": ["thilia", "familia"],
+    "description": "Jaci, Thilia's agent"
+  },
+  "openclaw": {
+    "key_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+    "role": "read",
+    "calendars": ["familia"],
+    "description": "OpenClaw on ClaudinhoSandbox, third-party model: read only"
+  }
+}

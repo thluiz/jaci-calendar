@@ -1,0 +1,38 @@
+# ============================================================================
+# This service holds a Google service account credential and reads real
+# people's calendars. When unsure about a new file, ignore it here BEFORE the
+# first commit: git keeps forever whatever went in once.
+# ============================================================================
+
+# --- credentials -----------------------------------------------------------
+.env
+.env.*
+!.env.example
+sa-key.json
+*-sa-key.json
+*.pem
+*.p12
+api-key
+
+# --- principals: key hashes and the per-agent calendar allowlist -----------
+principals.json
+!principals.example.json
+
+# --- calendars.json holds personal calendar ids (e-mail addresses) ---------
+calendars.json
+!calendars.example.json
+
+# --- audit trail (who scheduled what, with whom) ---------------------------
+logs/
+*.ndjson
+*.jsonl
+
+# --- build / editor noise --------------------------------------------------
+node_modules/
+bun.lockb
+bun.lock
+dist/
+*.log
+.DS_Store
+.idea/
+.vscode/

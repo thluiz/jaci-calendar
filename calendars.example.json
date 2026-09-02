@@ -1,0 +1,19 @@
+{
+  "_comment": "alias -> Google calendar id + the level it was shared with the service account. 'access' must mirror what was picked in the Google UI: declaring 'details' for a calendar shared as free/busy only yields a 403 on read.",
+
+  "thiago": {
+    "id": "thiago@gmail.com",
+    "access": "details",
+    "description": "Thiago's personal calendar"
+  },
+  "thilia": {
+    "id": "thilia@gmail.com",
+    "access": "busy_only",
+    "description": "Thilia's calendar, shared as availability only"
+  },
+  "familia": {
+    "id": "abc123@group.calendar.google.com",
+    "access": "details",
+    "description": "shared family calendar"
+  }
+}
