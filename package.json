@@ -1,0 +1,17 @@
+{
+  "name": "calendar-gate",
+  "version": "0.1.0",
+  "description": "Headless multi-user Google Calendar HTTP + MCP gateway for AI agents",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thluiz/jaci-calendar.git"
+  },
+  "scripts": {
+    "start": "bun run server.ts",
+    "dev": "bun --watch server.ts",
+    "test": "bun test"
+  }
+}

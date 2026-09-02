@@ -1,0 +1,31 @@
+[Unit]
+Description=calendar-gate — Google Calendar gateway for agents (HTTP + MCP)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hermes
+Group=hermes
+WorkingDirectory=/home/hermes/services/calendar-gate
+Environment=PATH=/home/hermes/.bun/bin:/usr/local/bin:/usr/bin:/bin
+Environment=HOME=/home/hermes
+EnvironmentFile=/home/hermes/services/calendar-gate/.env
+ExecStart=/home/hermes/.bun/bin/bun run server.ts
+# Reload the principal registry and drop the cached Google credential without
+# dropping connections: revoking one agent must not interrupt the others.
+ExecReload=/bin/kill -HUP $MAINPID
+# Always, never on-failure: a SIGTERM with on-failure leaves the service dead.
+Restart=always
+RestartSec=5
+
+# The secrets are files, never inline here: `systemctl show` prints Environment=
+# lines to any user who asks.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/hermes/services/calendar-gate
+
+[Install]
+WantedBy=multi-user.target
