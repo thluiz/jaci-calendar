@@ -26,8 +26,8 @@ function buildRegistry(overrides?: {
   const calendars = parseCalendars(
     overrides?.calendars ?? {
       _comment: "ignored",
-      thiago: { id: "thiago@gmail.com", access: "details" },
-      thilia: { id: "thilia@gmail.com", access: "busy_only" },
+      thiago: { id: "thiago@example.com", access: "details" },
+      thilia: { id: "thilia@example.com", access: "busy_only" },
       familia: { id: "fam@group.calendar.google.com", access: "details" },
     },
     errors
@@ -73,7 +73,7 @@ describe("parsePrincipals", () => {
   test("accepts a raw calendar id as well as an alias", () => {
     const { registry } = buildRegistry({
       principals: {
-        p: { key_sha256: hashKey(KEY_WRITE), role: "write", calendars: ["thiago@gmail.com"] },
+        p: { key_sha256: hashKey(KEY_WRITE), role: "write", calendars: ["thiago@example.com"] },
       },
     })
     expect(registry.principals.get("p")?.calendars).toEqual(["thiago"])
@@ -142,15 +142,15 @@ describe("resolveCalendar", () => {
   test("resolves by alias and by id, within the principal's set", () => {
     const { registry } = buildRegistry()
     const p = resolvePrincipal(registry, KEY_WRITE)!
-    expect(resolveCalendar(registry, p, "thiago")?.id).toBe("thiago@gmail.com")
-    expect(resolveCalendar(registry, p, "THIAGO@gmail.com")?.alias).toBe("thiago")
+    expect(resolveCalendar(registry, p, "thiago")?.id).toBe("thiago@example.com")
+    expect(resolveCalendar(registry, p, "THIAGO@example.com")?.alias).toBe("thiago")
   })
 
   test("denies a calendar the service account can see but this principal cannot", () => {
     const { registry } = buildRegistry()
     const p = resolvePrincipal(registry, KEY_WRITE)!
     expect(resolveCalendar(registry, p, "thilia")).toBeNull()
-    expect(resolveCalendar(registry, p, "thilia@gmail.com")).toBeNull()
+    expect(resolveCalendar(registry, p, "thilia@example.com")).toBeNull()
   })
 })
 
@@ -216,7 +216,7 @@ describe("describePrincipal", () => {
     const dump = JSON.stringify(describePrincipal(registry, p))
     expect(dump).not.toContain(hashKey(KEY_WRITE))
     expect(dump).not.toContain(KEY_WRITE)
-    expect(dump).toContain("thiago@gmail.com")
+    expect(dump).toContain("thiago@example.com")
   })
 
   test("lists only this principal's calendars, with their access level", () => {

@@ -29,7 +29,7 @@ describe("validateEventInput", () => {
   })
 
   test("rejects attendees, and says what to do instead", () => {
-    const out = validateEventInput({ ...good, attendees: ["thilia@gmail.com"] }, DEFAULTS)
+    const out = validateEventInput({ ...good, attendees: ["thilia@example.com"] }, DEFAULTS)
     expect(isViolation(out)).toBe(true)
     if (!isViolation(out)) return
     expect(out.code).toBe("ATTENDEES_NOT_SUPPORTED")
