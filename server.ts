@@ -57,6 +57,13 @@ for (const problem of registry.errors) log("registry problem", { problem })
 // ───────────────────────────────────────────────────────────────────── errors
 
 class ApiError extends Error {
+  /**
+   * Set by the handlers that already wrote a richer audit line (with the group
+   * id and the calendars). Everything else is audited centrally, so a denial
+   * cannot be lost just because it was raised early.
+   */
+  audited = false
+
   constructor(
     readonly code: string,
     message: string,
@@ -435,12 +442,14 @@ async function opCreateEvent(principal: Principal, body: Record<string, unknown>
         group_id: plan.groupId,
         reason: "CONFLICT",
       })
-      throw new ApiError(
+      const conflictError = new ApiError(
         "CONFLICT",
         "the requested time overlaps existing events. Send allow_conflict: true to schedule anyway.",
         409,
         { conflicts }
       )
+      conflictError.audited = true
+      throw conflictError
     }
   }
 
@@ -457,7 +466,9 @@ async function opCreateEvent(principal: Principal, body: Record<string, unknown>
       calendars: calendars.map((c) => c.alias),
       reason: decision.violation?.code,
     })
-    throw ApiError.from(decision.violation!)
+    const limitError = ApiError.from(decision.violation!)
+    limitError.audited = true
+    throw limitError
   }
 
   if (dryRun) {
@@ -589,12 +600,14 @@ async function opUpdateEvent(principal: Principal, groupId: string, body: Record
     const hits = conflictsIn(blocks, toSpan({ start: input.start, end: input.end }))
     if (hits.length) {
       await audit(principal, "update_event", "denied", 409, { group_id: groupId, reason: "CONFLICT" })
-      throw new ApiError(
+      const conflictError = new ApiError(
         "CONFLICT",
         "the new time overlaps existing events. Send allow_conflict: true to move it anyway.",
         409,
         { conflicts: hits }
       )
+      conflictError.audited = true
+      throw conflictError
     }
   }
 
@@ -609,7 +622,9 @@ async function opUpdateEvent(principal: Principal, groupId: string, body: Record
       void notify(`calendar-gate: write limit hit by "${principal.name}" on update. Nothing was written.`)
     }
     await audit(principal, "update_event", "denied", 429, { group_id: groupId, reason: decision.violation?.code })
-    throw ApiError.from(decision.violation!)
+    const limitError = ApiError.from(decision.violation!)
+    limitError.audited = true
+    throw limitError
   }
 
   if (body.dry_run === true) {
@@ -679,13 +694,41 @@ async function audit(
   })
 }
 
+/**
+ * Single choke point for both transports. Every refusal is logged here, which
+ * is the point of the audit trail: a run of CALENDAR_DENIED is what an agent in
+ * a loop, or someone probing the allowlist, looks like, and those are raised
+ * early — before the handlers that write their own richer line.
+ *
+ * REST and MCP both go through it, so a denial cannot be recorded on one
+ * transport and lost on the other.
+ */
+async function run<T>(principal: Principal, operation: string, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn()
+  } catch (e) {
+    if (e instanceof ApiError) {
+      if (!e.audited) {
+        e.audited = true
+        await audit(principal, operation, e.status < 500 ? "denied" : "error", e.status, { reason: e.code })
+      }
+    } else if (e instanceof AuthError) {
+      await audit(principal, operation, "error", 503, { reason: "GOOGLE_AUTH_FAILED" })
+    } else if (e instanceof CalendarApiError) {
+      await audit(principal, operation, "error", e.status, { reason: "GOOGLE_API_ERROR" })
+    }
+    throw e
+  }
+}
+
 const handlers: Handlers = {
-  listCalendars: (p) => opListCalendars(p),
-  searchEvents: (p, args) => opSearchEvents(p, args),
-  checkConflicts: (p, args) => opCheckConflicts(p, args),
-  findFreeSlots: (p, args) => opFindFreeSlots(p, args),
-  createEvent: (p, args) => opCreateEvent(p, args),
-  updateEvent: (p, args) => opUpdateEvent(p, String(args.group_id ?? ""), args),
+  listCalendars: (p) => run(p, "list_calendars", () => opListCalendars(p)),
+  searchEvents: (p, args) => run(p, "search_events", () => opSearchEvents(p, args)),
+  checkConflicts: (p, args) => run(p, "check_conflicts", () => opCheckConflicts(p, args)),
+  findFreeSlots: (p, args) => run(p, "find_free_slots", () => opFindFreeSlots(p, args)),
+  createEvent: (p, args) => run(p, "create_event", () => opCreateEvent(p, args)),
+  updateEvent: (p, args) =>
+    run(p, "update_event", () => opUpdateEvent(p, String(args.group_id ?? ""), args)),
 }
 
 // ─────────────────────────────────────────────────────────────────────── HTTP
@@ -751,27 +794,28 @@ const server = Bun.serve({
       }
 
       if (path === "/calendars" && req.method === "GET") {
-        return json(await opListCalendars(authenticate(req)))
+        const principal = authenticate(req)
+        return json(await handlers.listCalendars(principal))
       }
 
       if (path === "/events/search" && req.method === "POST") {
         const principal = authenticate(req)
-        return json(await opSearchEvents(principal, await readBody(req)))
+        return json(await handlers.searchEvents(principal, await readBody(req)))
       }
 
       if (path === "/conflicts" && req.method === "POST") {
         const principal = authenticate(req)
-        return json(await opCheckConflicts(principal, await readBody(req)))
+        return json(await handlers.checkConflicts(principal, await readBody(req)))
       }
 
       if (path === "/free-slots" && req.method === "POST") {
         const principal = authenticate(req)
-        return json(await opFindFreeSlots(principal, await readBody(req)))
+        return json(await handlers.findFreeSlots(principal, await readBody(req)))
       }
 
       if (path === "/events" && req.method === "POST") {
         const principal = authenticate(req)
-        const result = await opCreateEvent(principal, await readBody(req))
+        const result = await handlers.createEvent(principal, await readBody(req))
         const status = typeof (result as { status?: number }).status === "number"
           ? (result as { status: number }).status
           : 200
@@ -781,7 +825,9 @@ const server = Bun.serve({
       const groupMatch = /^\/events\/group\/([^/]+)$/.exec(path)
       if (groupMatch && req.method === "PATCH") {
         const principal = authenticate(req)
-        const result = await opUpdateEvent(principal, decodeURIComponent(groupMatch[1]!), await readBody(req))
+        const body = await readBody(req)
+        body.group_id = decodeURIComponent(groupMatch[1]!)
+        const result = await handlers.updateEvent(principal, body)
         return json(result, (result as { status?: number }).status ?? 200)
       }
 
@@ -789,6 +835,18 @@ const server = Bun.serve({
     } catch (e) {
       const { status, body } = toResponseError(e)
       if (status >= 500) log("request failed", { path, status, error: String((e as Error)?.message ?? e) })
+      // A run of these is the intrusion signal, and there is no principal to
+      // attribute them to — that is exactly what makes them worth keeping.
+      if (status === 401) {
+        await appendLog({
+          ts: new Date().toISOString(),
+          principal: "(unknown)",
+          operation: `${req.method} ${path}`,
+          outcome: "denied",
+          status,
+          reason: "UNAUTHORIZED",
+        })
+      }
       return json(body, status)
     }
   },
