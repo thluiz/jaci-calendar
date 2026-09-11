@@ -31,6 +31,16 @@ First implementation, from the plan of 2026-08-29 (service account revision).
   `tools/list` is filtered by role.
 - Audit log (`logger.ts`): daily NDJSON of writes and denials, without secrets.
 
+### Fixed
+
+- `search_events` and `check_conflicts` now echo `group_id` on any event that
+  carries one. Previously the field was read from `extendedProperties.private`
+  for conflict-skipping but never included in the response, so a session that
+  had not seen the original `create_event` call — a different agent session, or
+  the same agent on a later day — had no way to recover the `group_id` that
+  `update_event` requires, and could not edit an event it had itself created
+  through calendar-gate earlier.
+
 ### Decisions worth remembering
 
 - **`/mcp` requires a key**, unlike the other services in this fleet. An open
