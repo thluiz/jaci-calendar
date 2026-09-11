@@ -120,6 +120,23 @@ describe("busyFromEvents", () => {
     expect(blocks[1]!.summary).toBe("Later")
     expect(blocks.every((b) => b.detail === "details")).toBe(true)
   })
+
+  test("carries group_id so a past fan-out can be found again", () => {
+    const blocks = busyFromEvents(
+      [
+        timed("2026-08-30T14:00:00-03:00", "2026-08-30T15:00:00-03:00", {
+          id: "copy-on-thiago",
+          summary: "Feira Manso",
+          extendedProperties: { private: { group_id: "g1" } },
+        }),
+        timed("2026-08-30T16:00:00-03:00", "2026-08-30T17:00:00-03:00", { id: "plain", summary: "No group" }),
+      ],
+      "thiago",
+      TZ
+    )
+    expect(blocks[0]!.group_id).toBe("g1")
+    expect(blocks[1]!.group_id).toBeUndefined()
+  })
 })
 
 describe("busyFromFreeBusy", () => {

@@ -48,6 +48,8 @@ export interface BusyBlock extends Interval {
   calendar: string
   detail: Access
   event_id?: string
+  /** Present when this event was created by calendar-gate — pass it to update_event. */
+  group_id?: string
   summary?: string
   all_day?: boolean
 }
