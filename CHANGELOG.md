@@ -4,7 +4,7 @@
 
 First implementation, from the plan of 2026-08-29 (service account revision).
 
-### Added
+### Added — 2026-09-02
 
 - Service account auth (`google/auth.ts`): RS256 JWT signed with `crypto.subtle`,
   traded for a one-hour access token, cached in memory and refreshed a minute
@@ -31,7 +31,24 @@ First implementation, from the plan of 2026-08-29 (service account revision).
   `tools/list` is filtered by role.
 - Audit log (`logger.ts`): daily NDJSON of writes and denials, without secrets.
 
-### Fixed
+### Fixed — 2026-09-02
+
+- Default timezone changed from `America/Sao_Paulo` to `Europe/Lisbon`: the
+  calendar actually shared with the service account declares Europe/Lisbon, and
+  the users are in Portugal, where DST (unlike Brazil) means the offset is not a
+  fixed distance from UTC.
+- Denials now reach the audit log on both transports. `CALENDAR_DENIED` (403)
+  and input rejections were raised before the handlers that wrote their own
+  audit line, so they never appeared — including every denial from MCP, the
+  transport the main agent actually uses. Both transports now funnel through
+  one `run()` choke point that logs the refusal, with unauthorized requests
+  logged under `"(unknown)"` rather than dropped.
+- `GET /mcp`'s SSE keep-alive now stays open and heartbeats every 25s instead
+  of closing immediately after one comment. OpenClaw holds the connection and
+  was reopening it ~10 times a minute (~14k log entries a day), burying the
+  audit trail the log exists for.
+
+### Fixed — 2026-09-11
 
 - `search_events` and `check_conflicts` now echo `group_id` on any event that
   carries one. Previously the field was read from `extendedProperties.private`
@@ -41,7 +58,7 @@ First implementation, from the plan of 2026-08-29 (service account revision).
   `update_event` requires, and could not edit an event it had itself created
   through calendar-gate earlier.
 
-### Decisions worth remembering
+### Decisions worth remembering — 2026-09-02
 
 - **`/mcp` requires a key**, unlike the other services in this fleet. An open
   `/mcp` would let any local process write to anyone's calendar.
