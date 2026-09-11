@@ -71,6 +71,9 @@ export const TOOLS: Tool[] = [
       "Lists events in a time window, across one or more calendars. " +
       "Recurring events come back expanded into their occurrences, and events from a 'busy_only' calendar arrive " +
       "as bare intervals marked detail: 'busy_only' — those have no title to report, say only that the person is busy. " +
+      "An event carries group_id when it was created by this service (even in a different session) — copy it from " +
+      "here to call update_event; an event with no group_id was created directly in Google Calendar and cannot be " +
+      "updated through this service. " +
       "Use it to answer what is on the agenda; to ask whether a specific slot is free, use check_conflicts instead.",
     inputSchema: {
       type: "object",

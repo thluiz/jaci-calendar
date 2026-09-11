@@ -53,6 +53,12 @@ participant has to be invited by hand in Google Calendar. An `attendees` field
 in a request is rejected with a message explaining this, so an agent does not
 keep retrying into a 403 from Google.
 
+`search_events` and `check_conflicts` echo `group_id` back on any event that
+carries one, so an event created by calendar-gate in an earlier session — even
+one whose `group_id` was never seen by the current session — can still be
+found and updated later. An event created directly in Google Calendar has no
+`group_id` and cannot be updated through this service.
+
 ## Endpoints
 
 | Method | Route | Role | What |

@@ -92,6 +92,9 @@ export function busyFromEvents(
       start: toRfc3339(span.startMs, timeZone),
       end: toRfc3339(span.endMs, timeZone),
       ...(event.id ? { event_id: event.id } : {}),
+      ...(event.extendedProperties?.private?.group_id
+        ? { group_id: event.extendedProperties.private.group_id }
+        : {}),
       ...(event.summary ? { summary: event.summary } : {}),
       ...(event.start?.date ? { all_day: true } : {}),
     })
