@@ -8,7 +8,7 @@
  * model; the redundancy is the point.
  */
 
-import type { Access, EventInput } from "./types"
+import type { Access, EventInput, ShowAs } from "./types"
 
 export interface PolicyViolation {
   code: string
@@ -45,6 +45,25 @@ export function parseInstant(value: unknown, field: string): { ms: number } | Po
   return { ms }
 }
 
+/**
+ * A search-window bound: a timestamp, never a plain date. Google rejects a
+ * bare date in timeMin/timeMax with a 400, which used to surface as "could not
+ * read the calendar" — and "2026-10-02" as an end is ambiguous anyway: through
+ * Friday, or up to Friday's first minute?
+ */
+export function parseTimestamp(value: unknown, field: string): { ms: number } | PolicyViolation {
+  if (typeof value === "string" && DATE_ONLY.test(value.trim())) {
+    return {
+      code: "INVALID_INPUT",
+      message:
+        `${field} must be a timestamp with an explicit offset, not a plain date: ` +
+        `send ${value.trim()}T00:00:00+01:00 (the end is exclusive, so a window through Friday ends on Saturday at 00:00)`,
+      status: 400,
+    }
+  }
+  return parseInstant(value, field)
+}
+
 export function isViolation(x: unknown): x is PolicyViolation {
   return typeof x === "object" && x !== null && "code" in x && "status" in x
 }
@@ -70,6 +89,14 @@ export function validateEventInput(
     }
   }
 
+  let showAs: ShowAs | undefined
+  if (body.show_as !== undefined) {
+    if (body.show_as !== "free" && body.show_as !== "busy") {
+      return { code: "INVALID_INPUT", message: 'show_as must be "free" or "busy"', status: 400 }
+    }
+    showAs = body.show_as
+  }
+
   const summary = typeof body.summary === "string" ? body.summary.trim() : ""
   if (opts.requireTimes && !summary) {
     return { code: "INVALID_INPUT", message: "summary is required", status: 400 }
@@ -89,6 +116,7 @@ export function validateEventInput(
       all_day: false,
       ...(typeof body.description === "string" ? { description: body.description } : {}),
       ...(typeof body.location === "string" ? { location: body.location } : {}),
+      ...(showAs ? { show_as: showAs } : {}),
     }
   }
 
@@ -125,6 +153,7 @@ export function validateEventInput(
     all_day: allDay,
     ...(typeof body.description === "string" ? { description: body.description } : {}),
     ...(typeof body.location === "string" ? { location: body.location } : {}),
+    ...(showAs ? { show_as: showAs } : {}),
   }
 }
 

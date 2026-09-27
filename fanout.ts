@@ -52,6 +52,18 @@ export function planFanout(
   return { groupId, targets }
 }
 
+/**
+ * Google's transparency for an event. The API defaults every event to opaque,
+ * all-day ones included, while the Google Calendar UI creates all-day events as
+ * free; following the API meant a multi-day fair written by an agent swallowed
+ * a whole week of free-slot search. So the UI's rule applies unless the caller
+ * said otherwise.
+ */
+export function transparencyFor(input: Pick<EventInput, "all_day" | "show_as">): "transparent" | "opaque" {
+  const showAs = input.show_as ?? (input.all_day ? "free" : "busy")
+  return showAs === "free" ? "transparent" : "opaque"
+}
+
 /** The event body sent to Google, with the group marker attached. */
 export function buildEventBody(
   input: EventInput,
@@ -70,6 +82,7 @@ export function buildEventBody(
     ...(input.description ? { description: input.description } : {}),
     ...(input.location ? { location: input.location } : {}),
     ...when,
+    transparency: transparencyFor(input),
     extendedProperties: { private: { group_id: groupId, ...extra } },
   }
 }
@@ -89,6 +102,9 @@ export function buildPatchBody(input: Partial<EventInput>): GoogleEvent {
       patch.end = { dateTime: input.end, timeZone: input.timezone }
     }
   }
+  // Only on request: an update must not undo a choice someone made by hand in
+  // Google Calendar just because the dates moved.
+  if (input.show_as) patch.transparency = transparencyFor({ all_day: false, show_as: input.show_as })
   return patch
 }
 

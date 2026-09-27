@@ -63,7 +63,8 @@ export interface BusyFilterOptions {
 export function isBlocking(event: GoogleEvent, opts: BusyFilterOptions = {}): boolean {
   if (event.status === "cancelled") return false
   // "transparent" is Google's word for "show me as available" — the owner said
-  // it is not a commitment, and all-day events default to it.
+  // it is not a commitment. The Calendar UI creates all-day events that way, but
+  // the API defaults everything to opaque, so an all-day event can well be busy.
   if (event.transparency === "transparent") return false
   if (event.eventType && NON_BLOCKING_EVENT_TYPES.has(event.eventType)) return false
   if (event.attendees?.some((a) => a.self && a.responseStatus === "declined")) return false
@@ -121,6 +122,24 @@ export function busyFromFreeBusy(
     }))
     .filter((b) => !b.start.includes("NaN") && !b.end.includes("NaN"))
     .sort((a, b) => a.start.localeCompare(b.start))
+}
+
+/**
+ * The query window for an event about to be written, as RFC3339. An all-day
+ * event arrives as plain dates, which Google rejects in timeMin/timeMax and
+ * Date.parse reads as UTC midnight; its boundaries belong to the event's zone.
+ */
+export function eventWindow(input: {
+  start: string
+  end: string
+  all_day: boolean
+  timezone: string
+}): { timeMin: string; timeMax: string } {
+  if (!input.all_day) return { timeMin: input.start, timeMax: input.end }
+  return {
+    timeMin: toRfc3339(dateOnlyToInstant(input.start, input.timezone), input.timezone),
+    timeMax: toRfc3339(dateOnlyToInstant(input.end, input.timezone), input.timezone),
+  }
 }
 
 export function toSpan(block: { start: string; end: string }): Span {

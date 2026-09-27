@@ -87,7 +87,7 @@ saying what to check, and fires one alert per hour through gossip-gate.
 | `list_calendars` | read | calendars this key reaches, with access level |
 | `search_events` | read | events by window and text |
 | `check_conflicts` | read | what collides; titles only where allowed |
-| `find_free_slots` | read | free gaps in working hours |
+| `find_free_slots` | read | free gaps in working hours; names busy all-day events in `all_day_blocks` |
 | `create_event` | write | create on one or more calendars, linked by `group_id` |
 | `update_event` | write | update every copy of a `group_id` |
 
@@ -103,7 +103,9 @@ tool the model cannot see is a tool it cannot hallucinate calling.
 4. **Date guard** — refuses a start more than 24h in the past without
    `allow_past`, and more than two years ahead. Catches year typos.
 5. **Conflicts block writes** — `create` and `update` check for themselves and
-   answer 409 with the colliding events unless `allow_conflict: true`.
+   answer 409 with the colliding events unless `allow_conflict: true`. An event
+   shown as free (`show_as: "free"`, the default for all-day events, as in the
+   Google Calendar UI) takes nobody's time and is not checked.
 6. **Fail closed on unreadable calendars** — if a calendar cannot be read, the
    answer is an error, not "the day is free". Override with `partial_ok: true`.
 7. **Idempotency** — the event id is `sha256(idempotency_key + calendar_id)` in

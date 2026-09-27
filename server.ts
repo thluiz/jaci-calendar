@@ -28,7 +28,7 @@ import {
   checkDateGuard,
   checkWritableAccess,
   isViolation,
-  parseInstant,
+  parseTimestamp,
   validateEventInput,
   WriteLimiter,
   type PolicyViolation,
@@ -37,10 +37,11 @@ import {
   busyFromEvents,
   busyFromFreeBusy,
   conflictsIn,
+  eventWindow,
   findFreeSlots,
   toSpan,
 } from "./conflicts"
-import { buildEventBody, buildPatchBody, planFanout, summarizeFanout } from "./fanout"
+import { buildEventBody, buildPatchBody, planFanout, summarizeFanout, transparencyFor } from "./fanout"
 import { randomIdempotencyKey } from "./idempotency"
 import { isValidTimezone } from "./timezone"
 import { handleMCP, type Handlers } from "./mcp"
@@ -160,9 +161,9 @@ function resolveAll(principal: Principal, refs: unknown, opts: { required: boole
 }
 
 function requireWindow(body: Record<string, unknown>): { timeMin: string; timeMax: string } {
-  const min = parseInstant(body.time_min, "time_min")
+  const min = parseTimestamp(body.time_min, "time_min")
   if (isViolation(min)) throw ApiError.from(min)
-  const max = parseInstant(body.time_max, "time_max")
+  const max = parseTimestamp(body.time_max, "time_max")
   if (isViolation(max)) throw ApiError.from(max)
   if (max.ms <= min.ms) throw new ApiError("INVALID_INPUT", "time_max must be after time_min", 400)
   if (max.ms - min.ms > 366 * 24 * 60 * 60 * 1000) {
@@ -324,9 +325,9 @@ async function opCheckConflicts(principal: Principal, body: Record<string, unkno
   const calendars = resolveAll(principal, body.calendar_ids, { required: false })
   const timezone = timezoneOf(body)
 
-  const start = parseInstant(body.start, "start")
+  const start = parseTimestamp(body.start, "start")
   if (isViolation(start)) throw ApiError.from(start)
-  const end = parseInstant(body.end, "end")
+  const end = parseTimestamp(body.end, "end")
   if (isViolation(end)) throw ApiError.from(end)
   if (end.ms <= start.ms) throw new ApiError("INVALID_INPUT", "end must be after start", 400)
 
@@ -368,8 +369,17 @@ async function opFindFreeSlots(principal: Principal, body: Record<string, unknow
     ? body.weekdays.map(Number).filter((n) => Number.isInteger(n) && n >= 0 && n <= 6)
     : undefined
 
-  const { blocks, errors } = await collectBusy(calendars, window, timezone)
+  const { blocks: allBlocks, errors } = await collectBusy(calendars, window, timezone)
   assertComplete(errors, body)
+
+  // An all-day event marked busy takes out every working hour it touches. That
+  // is right for a holiday and wrong for a fair someone just wanted on the
+  // calendar, and only the person can tell which: so name those events in the
+  // answer instead of returning a bare empty list, and let the agent resend
+  // with ignore_all_day once the person says they do not block anything.
+  const ignoreAllDay = body.ignore_all_day === true
+  const allDayBlocks = allBlocks.filter((b) => b.all_day)
+  const blocks = ignoreAllDay ? allBlocks.filter((b) => !b.all_day) : allBlocks
 
   const slots = findFreeSlots(blocks, {
     windowStart: window.timeMin,
@@ -388,6 +398,16 @@ async function opFindFreeSlots(principal: Principal, body: Record<string, unknow
     duration_minutes: duration,
     calendars_checked: calendars.map((c) => c.alias),
     slots,
+    ...(allDayBlocks.length
+      ? {
+          all_day_blocks: allDayBlocks,
+          note: ignoreAllDay
+            ? "all-day events were ignored as requested; the slots above disregard them."
+            : "these all-day events are marked busy and were treated as blocking every working hour of their days. " +
+              "If one does not actually keep the person from meeting (a fair, a trip of someone else, a reminder), " +
+              "ask them, and resend with ignore_all_day: true.",
+        }
+      : {}),
     ...(errors.length ? { calendar_errors: errors } : {}),
   }
 }
@@ -424,18 +444,17 @@ async function opCreateEvent(principal: Principal, body: Record<string, unknown>
 
   // Conflicts are checked against the same calendars the event would land on,
   // ignoring this event's own copies so that a retry does not collide with what
-  // it already created.
+  // it already created. An event shown as free takes nobody's time, so it is
+  // not checked at all.
   let conflicts: BusyBlock[] = []
-  if (body.allow_conflict !== true) {
-    const { blocks, errors } = await collectBusy(
-      calendars,
-      { timeMin: input.start, timeMax: input.end },
-      input.timezone,
-      { ignoreGroupId: plan.groupId }
-    )
+  if (body.allow_conflict !== true && transparencyFor(input) === "opaque") {
+    const window = eventWindow(input)
+    const { blocks, errors } = await collectBusy(calendars, window, input.timezone, {
+      ignoreGroupId: plan.groupId,
+    })
     // Writing after a failed conflict check would be scheduling blind.
     assertComplete(errors, body)
-    conflicts = conflictsIn(blocks, toSpan({ start: input.start, end: input.end }))
+    conflicts = conflictsIn(blocks, toSpan({ start: window.timeMin, end: window.timeMax }))
     if (conflicts.length) {
       await audit(principal, "create_event", "denied", 409, {
         calendars: calendars.map((c) => c.alias),
@@ -566,13 +585,13 @@ async function opUpdateEvent(principal: Principal, groupId: string, body: Record
 
   // Locate the copies first: an update that matches nothing is a 404, not a
   // silent success.
-  const found: Array<{ cal: CalendarEntry; eventId: string }> = []
+  const found: Array<{ cal: CalendarEntry; eventId: string; free: boolean }> = []
   const errors: Array<{ calendar: string; error: string }> = []
   await Promise.all(
     calendars.map(async (cal) => {
       try {
         for (const event of await client.findByGroupId(cal.id, groupId)) {
-          if (event.id) found.push({ cal, eventId: event.id })
+          if (event.id) found.push({ cal, eventId: event.id, free: event.transparency === "transparent" })
         }
       } catch (e) {
         errors.push({ calendar: cal.alias, error: describeCalendarError(e, cal) })
@@ -589,15 +608,15 @@ async function opUpdateEvent(principal: Principal, groupId: string, body: Record
     )
   }
 
-  if (movingTimes && body.allow_conflict !== true) {
-    const { blocks, errors: readErrors } = await collectBusy(
-      calendars,
-      { timeMin: input.start, timeMax: input.end },
-      input.timezone,
-      { ignoreGroupId: groupId }
-    )
+  // Free after the update, whether asked now or already so: nothing to collide.
+  const staysFree = input.show_as ? input.show_as === "free" : found.every((f) => f.free)
+  if (movingTimes && body.allow_conflict !== true && !staysFree) {
+    const window = eventWindow(input)
+    const { blocks, errors: readErrors } = await collectBusy(calendars, window, input.timezone, {
+      ignoreGroupId: groupId,
+    })
     assertComplete(readErrors, body)
-    const hits = conflictsIn(blocks, toSpan({ start: input.start, end: input.end }))
+    const hits = conflictsIn(blocks, toSpan({ start: window.timeMin, end: window.timeMax }))
     if (hits.length) {
       await audit(principal, "update_event", "denied", 409, { group_id: groupId, reason: "CONFLICT" })
       const conflictError = new ApiError(
@@ -613,7 +632,7 @@ async function opUpdateEvent(principal: Principal, groupId: string, body: Record
 
   const patch = buildPatchBody(input)
   if (!Object.keys(patch).length) {
-    throw new ApiError("INVALID_INPUT", "nothing to update: send summary, description, location or start+end", 400)
+    throw new ApiError("INVALID_INPUT", "nothing to update: send summary, description, location, show_as or start+end", 400)
   }
 
   const decision = limiter.consume(found.length, Date.now())
