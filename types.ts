@@ -80,7 +80,14 @@ export interface EventInput {
   end: string
   timezone: string
   all_day: boolean
+  /**
+   * Only when the caller chose explicitly. Left out, a new event follows the
+   * Google Calendar UI: all-day events show as free, timed ones as busy.
+   */
+  show_as?: ShowAs
 }
+
+export type ShowAs = "free" | "busy"
 
 /** Outcome of one copy of a fan-out. */
 export interface FanoutResult {

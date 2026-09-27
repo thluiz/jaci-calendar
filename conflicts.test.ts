@@ -4,6 +4,7 @@ import {
   busyFromFreeBusy,
   conflictsIn,
   eventSpan,
+  eventWindow,
   findFreeSlots,
   isBlocking,
   mergeSpans,
@@ -320,5 +321,18 @@ describe("toSpan", () => {
   test("round-trips an RFC3339 block", () => {
     const s = toSpan({ start: "2026-08-30T14:00:00-03:00", end: "2026-08-30T15:00:00-03:00" })
     expect(s.endMs - s.startMs).toBe(3600_000)
+  })
+})
+
+describe("eventWindow", () => {
+  test("a timed event queries its own instants", () => {
+    const input = { start: "2026-09-28T10:00:00+01:00", end: "2026-09-28T11:00:00+01:00", all_day: false, timezone: "Europe/Lisbon" }
+    expect(eventWindow(input)).toEqual({ timeMin: input.start, timeMax: input.end })
+  })
+
+  test("an all-day event queries midnight in its zone, never a bare date", () => {
+    expect(
+      eventWindow({ start: "2026-09-28", end: "2026-10-04", all_day: true, timezone: "Europe/Lisbon" })
+    ).toEqual({ timeMin: "2026-09-28T00:00:00+01:00", timeMax: "2026-10-04T00:00:00+01:00" })
   })
 })

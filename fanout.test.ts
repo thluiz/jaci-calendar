@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { buildEventBody, buildPatchBody, planFanout, summarizeFanout } from "./fanout"
+import { buildEventBody, buildPatchBody, planFanout, summarizeFanout, transparencyFor } from "./fanout"
 import { eventIdFor, groupIdFor, isValidEventId } from "./idempotency"
 import type { CalendarEntry, EventInput, FanoutResult } from "./types"
 
@@ -73,6 +73,19 @@ describe("buildEventBody", () => {
     expect("location" in body).toBe(false)
   })
 
+  test("follows the Calendar UI: all-day shows as free, timed as busy", () => {
+    expect(buildEventBody(INPUT, "g1").transparency).toBe("opaque")
+    const allDay = { ...INPUT, all_day: true, start: "2026-09-28", end: "2026-10-04" }
+    expect(buildEventBody(allDay, "g1").transparency).toBe("transparent")
+  })
+
+  test("an explicit show_as wins over the default", () => {
+    const allDay = { ...INPUT, all_day: true, start: "2026-09-28", end: "2026-09-29" }
+    expect(buildEventBody({ ...allDay, show_as: "busy" }, "g1").transparency).toBe("opaque")
+    expect(buildEventBody({ ...INPUT, show_as: "free" }, "g1").transparency).toBe("transparent")
+    expect(transparencyFor({ all_day: false, show_as: "free" })).toBe("transparent")
+  })
+
   test("extra private properties ride along with the group id", () => {
     const body = buildEventBody(INPUT, "g1", { created_by: "claude-code-thiago" })
     expect(body.extendedProperties?.private).toEqual({
@@ -95,6 +108,12 @@ describe("buildPatchBody", () => {
       timezone: "America/Sao_Paulo",
     })
     expect(patch.start?.dateTime).toBe("2026-09-03T21:00:00-03:00")
+  })
+
+  test("availability changes only when asked, never as a side effect of moving dates", () => {
+    const moved = buildPatchBody({ start: "2026-09-28", end: "2026-09-29", all_day: true })
+    expect("transparency" in moved).toBe(false)
+    expect(buildPatchBody({ show_as: "free" })).toEqual({ transparency: "transparent" })
   })
 
   test("an empty description clears it instead of being dropped", () => {

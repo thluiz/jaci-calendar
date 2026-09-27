@@ -43,8 +43,14 @@ interface Tool {
 }
 
 const WINDOW_PROPS = {
-  time_min: { type: "string", description: "Window start, RFC3339 with offset: 2026-09-03T00:00:00+01:00" },
-  time_max: { type: "string", description: "Window end, RFC3339 with offset (exclusive)" },
+  time_min: {
+    type: "string",
+    description: "Window start, RFC3339 with offset: 2026-09-03T00:00:00+01:00. A plain date is rejected",
+  },
+  time_max: {
+    type: "string",
+    description: "Window end, RFC3339 with offset, exclusive: a window through Friday ends Saturday 00:00",
+  },
   calendar_ids: {
     type: "array",
     items: { type: "string" },
@@ -116,6 +122,10 @@ export const TOOLS: Tool[] = [
       "Finds gaps long enough for a meeting, across everyone's calendars at once. " +
       "Returns whole free gaps inside working hours, not every possible start time, it never proposes a slot in the past, " +
       "and it fails rather than calling a day free when a calendar could not be read. " +
+      "All-day events marked busy block every working hour of their days and are listed in all_day_blocks; when one of " +
+      "them explains an empty or thin answer, name it to the person and ask whether it really blocks them before " +
+      "resending with ignore_all_day: true. " +
+      "Each slot's duration_minutes is the length of the whole gap, not of the meeting: propose a time inside it. " +
       "Use it to answer 'when can we meet'; then confirm the chosen time with the person before calling create_event.",
     inputSchema: {
       type: "object",
@@ -130,6 +140,10 @@ export const TOOLS: Tool[] = [
           description: "Days to consider, 0 = Sunday (default: [1,2,3,4,5])",
         },
         max_results: { type: "integer", description: "Maximum gaps to return (default: 20)" },
+        ignore_all_day: {
+          type: "boolean",
+          description: "Treat all-day events as not blocking, once the person confirmed they do not (default: false)",
+        },
         partial_ok: {
           type: "boolean",
           description: "Answer even if a calendar could not be read, instead of failing (default: false)",
@@ -165,6 +179,11 @@ export const TOOLS: Tool[] = [
           type: "string",
           description: "Stable key so a retry does not duplicate the event. Reuse the same key when retrying",
         },
+        show_as: {
+          type: "string",
+          enum: ["free", "busy"],
+          description: "Availability shown for the event (default: free for all-day events, busy for timed ones). A free event is never checked for conflicts",
+        },
         allow_conflict: { type: "boolean", description: "Schedule even if it overlaps (default: false)" },
         allow_past: { type: "boolean", description: "Allow a start more than 24h in the past (default: false)" },
         dry_run: { type: "boolean", description: "Validate and show what would be created, writing nothing (default: false)" },
@@ -189,6 +208,11 @@ export const TOOLS: Tool[] = [
         end: { type: "string", description: "New end, RFC3339 with offset. Must come with start" },
         description: { type: "string", description: "New body" },
         location: { type: "string", description: "New location" },
+        show_as: {
+          type: "string",
+          enum: ["free", "busy"],
+          description: "New availability. Left out, the event keeps what it has, even when its dates move",
+        },
         timezone: { type: "string", description: "IANA timezone (default: Europe/Lisbon)" },
         calendar_ids: {
           type: "array",

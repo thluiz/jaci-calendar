@@ -58,6 +58,30 @@ First implementation, from the plan of 2026-08-29 (service account revision).
   `update_event` requires, and could not edit an event it had itself created
   through calendar-gate earlier.
 
+### Fixed — 2026-09-27
+
+- `find_free_slots` found no free hour in the week of 28/09 because of an
+  all-day event, "Handmade Market Bolhão" (28/09–04/10), marked busy: it
+  correctly blocked every working hour of the week, but the answer was a bare
+  empty list the agent could not explain. All-day events marked busy now come
+  back in `all_day_blocks` with a note, and `ignore_all_day: true` recomputes
+  without them once the person confirms they do not block anything. The tool
+  description also says that each slot's `duration_minutes` is the whole gap,
+  not the meeting.
+- New events follow the Google Calendar UI on availability: all-day shows as
+  free, timed as busy. The API defaults everything to busy, so every all-day
+  event created here blocked whole days. `show_as: "free" | "busy"` overrides it
+  on create, and sets it on update; an update that only moves dates keeps what
+  the event had. A free event is not checked for conflicts.
+- A plain date in `time_min`/`time_max` (search, free slots) or in
+  `check_conflicts` is rejected with the timestamp to send instead. It used to go
+  straight to Google, which answers 400, and came back as `CALENDAR_UNREADABLE`
+  — "could not read the calendar", a false diagnosis.
+- The conflict check of an all-day `create_event`/`update_event` sent the plain
+  dates to Google the same way, so it always failed with that false
+  `CALENDAR_UNREADABLE` unless `allow_conflict` was set. It now queries midnight
+  to midnight in the event's zone.
+
 ### Decisions worth remembering — 2026-09-02
 
 - **`/mcp` requires a key**, unlike the other services in this fleet. An open

@@ -6,6 +6,7 @@ import {
   HOUR_MS,
   isViolation,
   parseInstant,
+  parseTimestamp,
   validateEventInput,
   WriteLimiter,
 } from "./policy"
@@ -207,5 +208,44 @@ describe("parseInstant", () => {
     expect(isViolation(parseInstant("", "start"))).toBe(true)
     expect(isViolation(parseInstant(undefined, "start"))).toBe(true)
     expect(isViolation(parseInstant(1756567200000, "start"))).toBe(true)
+  })
+})
+
+describe("parseTimestamp", () => {
+  test("rejects a plain date and shows the timestamp to send instead", () => {
+    const out = parseTimestamp("2026-10-02", "time_max")
+    expect(isViolation(out)).toBe(true)
+    if (!isViolation(out)) return
+    expect(out.status).toBe(400)
+    expect(out.message).toContain("2026-10-02T00:00:00")
+  })
+
+  test("accepts a timestamp with an offset", () => {
+    expect(parseTimestamp("2026-10-03T00:00:00+01:00", "time_max")).toEqual({
+      ms: Date.parse("2026-10-03T00:00:00+01:00"),
+    })
+  })
+})
+
+describe("validateEventInput show_as", () => {
+  const good = { summary: "Feira", start: "2026-09-28", end: "2026-10-04" }
+
+  test("absent unless sent, so the default can depend on all_day", () => {
+    const out = validateEventInput(good, DEFAULTS)
+    expect(isViolation(out) ? null : "show_as" in out).toBe(false)
+  })
+
+  test("passes free and busy through", () => {
+    const out = validateEventInput({ ...good, show_as: "busy" }, DEFAULTS)
+    expect(isViolation(out) ? null : out.show_as).toBe("busy")
+  })
+
+  test("rejects anything else", () => {
+    expect(isViolation(validateEventInput({ ...good, show_as: "maybe" }, DEFAULTS))).toBe(true)
+  })
+
+  test("is an update on its own", () => {
+    const out = validateEventInput({ show_as: "free" }, DEFAULTS, { requireTimes: false })
+    expect(isViolation(out) ? null : out.show_as).toBe("free")
   })
 })
