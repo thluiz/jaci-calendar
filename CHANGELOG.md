@@ -60,8 +60,8 @@ First implementation, from the plan of 2026-08-29 (service account revision).
 
 ### Fixed — 2026-09-27
 
-- `find_free_slots` found no free hour in the week of 28/09 because of an
-  all-day event, "Handmade Market Bolhão" (28/09–04/10), marked busy: it
+- `find_free_slots` found no free hour in the week of 2026-09-28 because of an
+  all-day event, "Handmade Market Bolhão" (2026-09-28 to 2026-10-03), marked busy: it
   correctly blocked every working hour of the week, but the answer was a bare
   empty list the agent could not explain. All-day events marked busy now come
   back in `all_day_blocks` with a note, and `ignore_all_day: true` recomputes
