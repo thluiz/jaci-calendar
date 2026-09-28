@@ -228,7 +228,7 @@ describe("parseTimestamp", () => {
 })
 
 describe("validateEventInput show_as", () => {
-  const good = { summary: "Feira", start: "2026-09-28", end: "2026-10-04" }
+  const good = { summary: "Craft fair", start: "2026-09-28", end: "2026-10-04" }
 
   test("absent unless sent, so the default can depend on all_day", () => {
     const out = validateEventInput(good, DEFAULTS)
