@@ -58,6 +58,14 @@ First implementation, from the plan of 2026-08-29 (service account revision).
   `update_event` requires, and could not edit an event it had itself created
   through calendar-gate earlier.
 
+### Fixed — 2026-09-30
+
+- `search_events` dropped every event marked free, because it shared the
+  conflict check's filter. All-day events are marked free so they stop blocking
+  slots, and they vanished from the morning briefing with it. The listing now
+  keeps them, flagged `show_as: "free"`; `check_conflicts` and
+  `find_free_slots` still ignore them.
+
 ### Fixed — 2026-09-27
 
 - `find_free_slots` found no free hour in the week of 2026-09-28 because of an

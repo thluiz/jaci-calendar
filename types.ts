@@ -52,6 +52,8 @@ export interface BusyBlock extends Interval {
   group_id?: string
   summary?: string
   all_day?: boolean
+  /** Only on events marked free, which search_events lists and check_conflicts ignores. */
+  show_as?: "free"
 }
 
 /** An event as Google returns it, in the subset this service looks at. */

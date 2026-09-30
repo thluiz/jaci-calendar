@@ -122,6 +122,22 @@ describe("busyFromEvents", () => {
     expect(blocks.every((b) => b.detail === "details")).toBe(true)
   })
 
+  test("includeFree keeps events marked free and flags them, for the agenda listing", () => {
+    const blocks = busyFromEvents(
+      [
+        { id: "a", summary: "Market", start: { date: "2026-08-30" }, end: { date: "2026-08-31" }, transparency: "transparent" },
+        timed("2026-08-30T16:00:00-03:00", "2026-08-30T17:00:00-03:00", { id: "b", summary: "Later" }),
+      ],
+      "thiago",
+      TZ,
+      { includeFree: true }
+    )
+    expect(blocks.map((b) => b.event_id)).toEqual(["a", "b"])
+    expect(blocks[0]!.show_as).toBe("free")
+    expect(blocks[0]!.all_day).toBe(true)
+    expect(blocks[1]!.show_as).toBeUndefined()
+  })
+
   test("carries group_id so a past fan-out can be found again", () => {
     const blocks = busyFromEvents(
       [
