@@ -401,10 +401,9 @@ export function createCalendarService(deps: ServiceDeps): Handlers {
       })
     }
 
-    await chargeWrites(principal, "create_event", plan.targets.length, auditExtra)
-
+    // A dry run writes nothing, so the write cap has nothing to guard: it is
+    // answered before the cap, and a simulation never trips the alert.
     if (req.dryRun) {
-      deps.limiter.refund(plan.targets.length)
       await audit(principal, "create_event", "dry_run", 200, auditExtra)
       return {
         dry_run: true,
@@ -414,6 +413,8 @@ export function createCalendarService(deps: ServiceDeps): Handlers {
         event: buildEventBody(input, plan.groupId),
       }
     }
+
+    await chargeWrites(principal, "create_event", plan.targets.length, auditExtra)
 
     const eventBody = buildEventBody(input, plan.groupId, { created_by: principal.name })
     const results = await writeEach(plan.targets, async (target) => {
@@ -505,10 +506,11 @@ export function createCalendarService(deps: ServiceDeps): Handlers {
       throw new ApiError("INVALID_INPUT", "nothing to update: send summary, description, location, show_as or start+end", 400)
     }
 
-    await chargeWrites(principal, "update_event", found.length, { group_id: groupId })
-
     if (req.dryRun) {
-      deps.limiter.refund(found.length)
+      await audit(principal, "update_event", "dry_run", 200, {
+        calendars: [...new Set(found.map((f) => f.cal.alias))],
+        group_id: groupId,
+      })
       return {
         dry_run: true,
         group_id: groupId,
@@ -516,6 +518,8 @@ export function createCalendarService(deps: ServiceDeps): Handlers {
         patch,
       }
     }
+
+    await chargeWrites(principal, "update_event", found.length, { group_id: groupId })
 
     const results = await writeEach(found, async ({ cal, eventId }) => {
       const where = { calendar: cal.alias, calendar_id: cal.id, event_id: eventId }

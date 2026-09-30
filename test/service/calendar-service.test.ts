@@ -380,14 +380,60 @@ describe("update_event", () => {
     expect(limiter.consume(3, NOW).allowed).toBe(true)
   })
 
-  test("a dry run still needs room under the cap: it is charged, then refunded", async () => {
-    const { service } = setup({ maxPerMin: 3 })
+  test("a dry run bypasses the write cap: it writes nothing, so there is nothing to cap", async () => {
+    const { service, entries, notices } = setup({ maxPerMin: 2 })
     const created = (await service.createEvent(WRITER, { ...MEETING, calendar_ids: ["ana", "bruno"] })) as any
 
+    // The cap is exhausted by the create; a simulation still answers.
+    const result = (await service.updateEvent(WRITER, {
+      group_id: created.group_id,
+      summary: "x",
+      dry_run: true,
+    })) as any
+    expect(result.dry_run).toBe(true)
+    const created2 = (await service.createEvent(WRITER, {
+      ...MEETING,
+      start: "2026-10-06T10:00:00+01:00",
+      end: "2026-10-06T11:00:00+01:00",
+      calendar_ids: ["ana"],
+      dry_run: true,
+    })) as any
+    expect(created2.dry_run).toBe(true)
+
+    expect(notices).toEqual([])
+    expect(entries.filter((e) => e.status === 429)).toEqual([])
+  })
+
+  test("a dry run is audited as dry_run, with the group and calendars", async () => {
+    const { service, entries } = setup()
+    const created = (await service.createEvent(WRITER, { ...MEETING, calendar_ids: ["ana", "bruno"] })) as any
+
+    await service.updateEvent(WRITER, { group_id: created.group_id, summary: "x", dry_run: true })
+
+    expect(entries.at(-1)).toMatchObject({
+      operation: "update_event",
+      outcome: "dry_run",
+      status: 200,
+      group_id: created.group_id,
+      calendars: ["ana", "bruno"],
+    })
+  })
+
+  test("an unknown timezone is refused with 400, not a crash", async () => {
+    const { service, google } = setup()
+    const created = (await service.createEvent(WRITER, { ...MEETING, calendar_ids: ["ana"] })) as any
+
     const err = await rejection(
-      service.updateEvent(WRITER, { group_id: created.group_id, summary: "x", dry_run: true })
+      service.updateEvent(WRITER, {
+        group_id: created.group_id,
+        start: "2026-10-05T12:00:00+01:00",
+        end: "2026-10-05T13:00:00+01:00",
+        timezone: "Mars/Olympus",
+      })
     )
-    expect(err.status).toBe(429)
+    expect(err.code).toBe("INVALID_INPUT")
+    expect(err.status).toBe(400)
+    expect(google.patches).toEqual([])
   })
 
   test("an update with nothing to change is refused", async () => {
