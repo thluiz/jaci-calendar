@@ -8,7 +8,7 @@
  * model; the redundancy is the point.
  */
 
-import type { Access, EventInput, ShowAs } from "./types"
+import type { Access, EventInput, ShowAs } from "../types"
 
 export interface PolicyViolation {
   code: string

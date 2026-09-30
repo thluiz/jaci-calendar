@@ -27,10 +27,9 @@ logs/
 *.ndjson
 *.jsonl
 
-# --- build / editor noise --------------------------------------------------
+# --- build / editor noise (bun.lock is committed: it pins the dev tooling) ---
 node_modules/
 bun.lockb
-bun.lock
 dist/
 *.log
 .DS_Store

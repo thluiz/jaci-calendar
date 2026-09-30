@@ -11,7 +11,7 @@ WorkingDirectory=/home/hermes/services/calendar-gate
 Environment=PATH=/home/hermes/.bun/bin:/usr/local/bin:/usr/bin:/bin
 Environment=HOME=/home/hermes
 EnvironmentFile=/home/hermes/services/calendar-gate/.env
-ExecStart=/home/hermes/.bun/bin/bun run server.ts
+ExecStart=/home/hermes/.bun/bin/bun run src/main.ts
 # Reload the principal registry and drop the cached Google credential without
 # dropping connections: revoking one agent must not interrupt the others.
 ExecReload=/bin/kill -HUP $MAINPID

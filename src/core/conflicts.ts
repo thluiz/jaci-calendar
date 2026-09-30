@@ -7,7 +7,7 @@
  * real calendar.
  */
 
-import type { Access, BusyBlock, GoogleEvent } from "./types"
+import type { Access, BusyBlock, GoogleEvent } from "../types"
 import { dateOnlyToInstant, parseClock, toRfc3339, wallToInstant, zonedParts } from "./timezone"
 
 export interface Span {

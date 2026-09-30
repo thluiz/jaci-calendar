@@ -13,7 +13,7 @@ import {
   resolveCalendar,
   resolvePrincipal,
   type Registry,
-} from "./principals"
+} from "../src/principals"
 
 const KEY_WRITE = "aaaa1111"
 const KEY_READ = "bbbb2222"

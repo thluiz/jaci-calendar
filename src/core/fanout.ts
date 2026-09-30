@@ -7,13 +7,13 @@
  * participant's own calendar, with a shared `group_id` in extendedProperties so
  * a later change reaches every copy.
  *
- * The planning is pure and lives here; the HTTP calls live in server.ts. That
- * split is what makes "a denied calendar aborts before any copy is created"
- * testable without touching Google.
+ * The planning is pure and lives here; the calls to Google live in
+ * service/calendar-service.ts. That split is what makes "a denied calendar
+ * aborts before any copy is created" testable without touching Google.
  */
 
 import { eventIdFor, groupIdFor } from "./idempotency"
-import type { CalendarEntry, EventInput, FanoutResult, GoogleEvent } from "./types"
+import type { CalendarEntry, EventInput, FanoutResult, GoogleEvent } from "../types"
 
 export interface FanoutTarget {
   alias: string

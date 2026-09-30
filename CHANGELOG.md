@@ -58,14 +58,6 @@ First implementation, from the plan of 2026-08-29 (service account revision).
   `update_event` requires, and could not edit an event it had itself created
   through calendar-gate earlier.
 
-### Fixed — 2026-09-30
-
-- `search_events` dropped every event marked free, because it shared the
-  conflict check's filter. All-day events are marked free so they stop blocking
-  slots, and they vanished from the morning briefing with it. The listing now
-  keeps them, flagged `show_as: "free"`; `check_conflicts` and
-  `find_free_slots` still ignore them.
-
 ### Fixed — 2026-09-27
 
 - `find_free_slots` found no free hour in the week of 2026-09-28 because of an
@@ -89,6 +81,42 @@ First implementation, from the plan of 2026-08-29 (service account revision).
   dates to Google the same way, so it always failed with that false
   `CALENDAR_UNREADABLE` unless `allow_conflict` was set. It now queries midnight
   to midnight in the event's zone.
+
+### Fixed — 2026-09-30
+
+- `search_events` dropped every event marked free, because it shared the
+  conflict check's filter. All-day events are marked free so they stop blocking
+  slots, and they vanished from the morning briefing with it. The listing now
+  keeps them, flagged `show_as: "free"`; `check_conflicts` and
+  `find_free_slots` still ignore them.
+
+### Changed — 2026-09-30
+
+- Source moved into `src/` and tests into `test/`, which mirrors it. The pure
+  rules sit in `src/core/`, the Google client in `src/google/`, and the example
+  registries in `deploy/`.
+- `server.ts` was split. It held the composition, the business rules, the
+  alerts and the HTTP routing in one file, and started the server on import, so
+  none of the create and update logic could be tested. The rules now live in
+  `src/service/calendar-service.ts` behind injected dependencies (Google
+  client, registry, limiter, audit log, alerts, clock), the routing in
+  `src/transport/http.ts`, and `src/main.ts` only wires them and listens.
+  Behavior is unchanged.
+- The audit log and the config no longer read the environment on their own:
+  `LOG_DIR` (default: `logs/` at the repository root, where it was) and
+  `LOG_RETENTION_DAYS` go through `config.ts`.
+- Type checking. `tsconfig.json` in strict mode, `typescript` and `@types/bun`
+  as dev dependencies, `bun.lock` committed, and `bun run check` for typecheck
+  plus tests. It found three type errors, none a runtime bug.
+- New tests for the service layer against an in-memory Google, covering the
+  all-or-nothing fan-out, idempotent retries, conflicts, write caps with their
+  refunds and alert, dry runs, the date guard and group updates, and for the
+  HTTP layer. 128 tests before, 151 after.
+
+**Upgrading an existing deploy:** the systemd unit now starts
+`bun run src/main.ts`. Copy `deploy/calendar-gate.service` to
+`/etc/systemd/system/` again and run `systemctl daemon-reload` before
+restarting, or the old `server.ts` path will fail to start.
 
 ### Decisions worth remembering — 2026-09-02
 
