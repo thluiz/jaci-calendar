@@ -173,5 +173,6 @@ export function parseCreate(body: Args, defaults: Defaults): CreateRequest {
 export function parseUpdate(body: Args, defaults: Defaults): UpdateRequest {
   const event = validateEventInput(body, defaults, { requireTimes: false })
   if (isViolation(event)) throw ApiError.from(event)
+  checkedTimezone(event.timezone)
   return { event, ...writeFlags(body) }
 }

@@ -90,6 +90,18 @@ First implementation, from the plan of 2026-08-29 (service account revision).
   keeps them, flagged `show_as: "free"`; `check_conflicts` and
   `find_free_slots` still ignore them.
 
+### Fixed — 2026-09-30 (found while refactoring)
+
+- `update_event` accepted an unknown `timezone` and sent it to Google, which
+  would fail every copy after the write cap had already been charged. It is now
+  refused with 400, as `create_event` already did.
+- A dry run of `update_event` was not audited, unlike one of `create_event`. It
+  now leaves a `dry_run` line with the group and the calendars.
+- A dry run was charged against the write cap and refunded, so with the cap
+  exhausted even a simulation answered 429, audited a denial and could fire the
+  "agent may be looping" alert. A dry run writes nothing, so it now skips the
+  cap altogether.
+
 ### Changed — 2026-09-30
 
 - Source moved into `src/` and tests into `test/`, which mirrors it. The pure
