@@ -299,6 +299,140 @@ describe("update_event", () => {
     )
     expect(err.status).toBe(409)
   })
+
+  test("a free event moves without a conflict check", async () => {
+    const { service, google } = setup()
+    const created = (await service.createEvent(WRITER, {
+      ...MEETING,
+      calendar_ids: ["ana"],
+      show_as: "free",
+    })) as any
+    google.seed("ana@example.com", {
+      id: "other",
+      summary: "Lunch",
+      start: { dateTime: "2026-10-05T13:00:00+01:00" },
+      end: { dateTime: "2026-10-05T14:00:00+01:00" },
+    })
+
+    const result = (await service.updateEvent(WRITER, {
+      group_id: created.group_id,
+      start: "2026-10-05T13:00:00+01:00",
+      end: "2026-10-05T14:00:00+01:00",
+    })) as any
+
+    expect(result.ok).toBe(true)
+  })
+
+  test("full success answers 200, one failed copy 207, every copy failed 502; failures are refunded", async () => {
+    const { service, google, limiter } = setup({ maxPerMin: 10 })
+    const created = (await service.createEvent(WRITER, { ...MEETING, calendar_ids: ["ana", "bruno"] })) as any
+
+    const ok = (await service.updateEvent(WRITER, { group_id: created.group_id, summary: "A" })) as any
+    expect(ok.status).toBe(200)
+
+    const realPatch = google.patchEvent.bind(google)
+    google.patchEvent = async (calendarId, eventId, patch) => {
+      if (calendarId === "bruno@example.com") throw new CalendarApiError(403, "forbidden")
+      return realPatch(calendarId, eventId, patch)
+    }
+    const partial = (await service.updateEvent(WRITER, { group_id: created.group_id, summary: "B" })) as any
+    expect(partial.status).toBe(207)
+    expect(partial.ok).toBe(false)
+
+    google.patchEvent = async () => {
+      throw new CalendarApiError(403, "forbidden")
+    }
+    const failed = (await service.updateEvent(WRITER, { group_id: created.group_id, summary: "C" })) as any
+    expect(failed.status).toBe(502)
+
+    // 2 creates + 2 + (2 - 1 refunded) + (2 - 2 refunded) = 5 of 10 spent.
+    expect(limiter.consume(5, NOW).allowed).toBe(true)
+    expect(limiter.consume(1, NOW).allowed).toBe(false)
+  })
+
+  test("the write cap counts every copy found, and nothing is patched past it", async () => {
+    const { service, google, entries, notices } = setup({ maxPerMin: 3 })
+    const created = (await service.createEvent(WRITER, { ...MEETING, calendar_ids: ["ana", "bruno"] })) as any
+
+    const err = await rejection(service.updateEvent(WRITER, { group_id: created.group_id, summary: "x" }))
+
+    expect(err.status).toBe(429)
+    expect(google.patches).toEqual([])
+    expect(notices).toHaveLength(1)
+    expect(entries.filter((e) => e.status === 429)).toEqual([
+      expect.objectContaining({ operation: "update_event", group_id: created.group_id }),
+    ])
+  })
+
+  test("dry_run shows the patch, writes nothing and spends nothing", async () => {
+    const { service, google, limiter } = setup({ maxPerMin: 5 })
+    const created = (await service.createEvent(WRITER, { ...MEETING, calendar_ids: ["ana", "bruno"] })) as any
+
+    const result = (await service.updateEvent(WRITER, {
+      group_id: created.group_id,
+      summary: "x",
+      dry_run: true,
+    })) as any
+
+    expect(result.would_update).toHaveLength(2)
+    expect(result.patch.summary).toBe("x")
+    expect(google.patches).toEqual([])
+    expect(limiter.consume(3, NOW).allowed).toBe(true)
+  })
+
+  test("a dry run still needs room under the cap: it is charged, then refunded", async () => {
+    const { service } = setup({ maxPerMin: 3 })
+    const created = (await service.createEvent(WRITER, { ...MEETING, calendar_ids: ["ana", "bruno"] })) as any
+
+    const err = await rejection(
+      service.updateEvent(WRITER, { group_id: created.group_id, summary: "x", dry_run: true })
+    )
+    expect(err.status).toBe(429)
+  })
+
+  test("an update with nothing to change is refused", async () => {
+    const { service } = setup()
+    const created = (await service.createEvent(WRITER, { ...MEETING, calendar_ids: ["ana"] })) as any
+
+    const err = await rejection(service.updateEvent(WRITER, { group_id: created.group_id }))
+    expect(err.code).toBe("INVALID_INPUT")
+  })
+})
+
+describe("create_event audit", () => {
+  test("a success is audited with the calendars, group and event ids", async () => {
+    const { service, entries } = setup()
+    const result = (await service.createEvent(WRITER, { ...MEETING, calendar_ids: ["ana", "bruno"] })) as any
+
+    expect(entries.at(-1)).toMatchObject({
+      operation: "create_event",
+      outcome: "ok",
+      calendars: ["ana", "bruno"],
+      group_id: result.group_id,
+    })
+    expect(entries.at(-1)!.event_ids).toHaveLength(2)
+  })
+
+  test("a dry run is audited as dry_run", async () => {
+    const { service, entries } = setup()
+    await service.createEvent(WRITER, { ...MEETING, calendar_ids: ["ana"], dry_run: true })
+
+    expect(entries.at(-1)).toMatchObject({ operation: "create_event", outcome: "dry_run", status: 200 })
+  })
+
+  test("an unreadable calendar during the conflict check blocks the write unless partial_ok", async () => {
+    const { service, google } = setup()
+    google.listEvents = async () => {
+      throw new CalendarApiError(500, "boom")
+    }
+
+    const err = await rejection(service.createEvent(WRITER, { ...MEETING, calendar_ids: ["ana"] }))
+    expect(err.code).toBe("CALENDAR_UNREADABLE")
+    expect(google.inserts).toEqual([])
+
+    const result = (await service.createEvent(WRITER, { ...MEETING, calendar_ids: ["ana"], partial_ok: true })) as any
+    expect(result.ok).toBe(true)
+  })
 })
 
 describe("reads", () => {
