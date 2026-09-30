@@ -10,16 +10,10 @@
  * /mcp would let any local process write to anyone's calendar.
  */
 
-import type { Principal, Role } from "./types"
+import type { Handlers } from "../service/calendar-service"
+import type { Principal, Role } from "../types"
 
-export interface Handlers {
-  listCalendars(principal: Principal): Promise<unknown>
-  searchEvents(principal: Principal, args: Record<string, unknown>): Promise<unknown>
-  checkConflicts(principal: Principal, args: Record<string, unknown>): Promise<unknown>
-  findFreeSlots(principal: Principal, args: Record<string, unknown>): Promise<unknown>
-  createEvent(principal: Principal, args: Record<string, unknown>): Promise<unknown>
-  updateEvent(principal: Principal, args: Record<string, unknown>): Promise<unknown>
-}
+export type { Handlers }
 
 interface MCPRequest {
   jsonrpc: "2.0"
@@ -404,7 +398,7 @@ export async function handleMCP(
 
   let body: MCPRequest | MCPRequest[]
   try {
-    body = await req.json()
+    body = (await req.json()) as MCPRequest | MCPRequest[]
   } catch {
     return new Response(JSON.stringify(err(null, -32700, "Parse error: invalid JSON")), {
       status: 400,

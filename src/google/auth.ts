@@ -48,7 +48,7 @@ function base64url(input: string | Uint8Array): string {
 }
 
 /** PEM (PKCS#8) to DER. The key file ships the newlines escaped inside JSON. */
-function pemToDer(pem: string): Uint8Array {
+function pemToDer(pem: string): Uint8Array<ArrayBuffer> {
   const body = pem
     .replace(/-----BEGIN [^-]+-----/, "")
     .replace(/-----END [^-]+-----/, "")

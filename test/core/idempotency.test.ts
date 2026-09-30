@@ -5,7 +5,7 @@ import {
   groupIdFor,
   isValidEventId,
   randomIdempotencyKey,
-} from "./idempotency"
+} from "../../src/core/idempotency"
 
 describe("base32hexEncode", () => {
   test("matches RFC 4648 base32hex vectors (without padding)", () => {

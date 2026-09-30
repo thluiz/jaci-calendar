@@ -1,8 +1,8 @@
 # calendar-gate
 
 Headless, multi-user Google Calendar gateway for AI agents. HTTP + MCP, Bun, no
-dependencies. Runs on HermesTools at port **8009**, reachable only through nginx
-on `:8080`.
+runtime dependencies. Runs on HermesTools at port **8009**, reachable only
+through nginx on `:8080`.
 
 Three requirements shape it, and none of them is a feature:
 
@@ -119,13 +119,14 @@ tool the model cannot see is a tool it cannot hallucinate calling.
 
 ## Configuration
 
-Three files next to the service, all `chmod 600` except where noted:
+Four files at the repository root, next to the service, all `chmod 600`:
 
 - `.env` — see `.env.example`.
 - `sa-key.json` — the service account key, downloaded from the GCP console.
-- `calendars.json` — alias, calendar id and share level. See the example.
+- `calendars.json` — alias, calendar id and share level. See
+  `deploy/calendars.example.json`.
 - `principals.json` — one entry per API key, holding the **SHA-256 of the key**,
-  never the key. See the example.
+  never the key. See `deploy/principals.example.json`.
 
 Generate a key and its hash:
 
@@ -144,23 +145,64 @@ systemctl reload calendar-gate    # or: kill -HUP $(pidof bun)
 
 ## Audit
 
-`logs/YYYY-MM-DD.ndjson`, 30 days. Every write and **every denial** is recorded
-with the principal, the operation, the calendar aliases, event ids, group id and
-the guard that refused. A run of `CALENDAR_DENIED` entries is what an agent in a
-loop, or an intruder probing the allowlist, looks like.
+`logs/YYYY-MM-DD.ndjson` at the repository root (`LOG_DIR` overrides it), 30
+days. Every write and **every denial** is recorded with the principal, the
+operation, the calendar aliases, event ids, group id and the guard that refused.
+A run of `CALENDAR_DENIED` entries is what an agent in a loop, or an intruder
+probing the allowlist, looks like.
 
 No API key, no key hash, no access token and no fragment of the service account
 JSON is ever written to the log.
 
-## Tests
+## Layout
 
-```bash
-bun test
+```
+src/
+  main.ts                  composition root: reads config, wires, listens, SIGHUP
+  config.ts                environment to a typed Config
+  types.ts                 provider-neutral vocabulary
+  principals.ts            API keys, roles and calendar allowlists
+  logger.ts                audit trail (NDJSON) and stdout lines
+  core/                    pure rules: no I/O, no clock, no network
+    policy.ts              input validation, date guard, write caps
+    conflicts.ts           overlap and free-slot maths
+    timezone.ts            wall clock to instant, DST-safe
+    fanout.ts              one copy per calendar, linked by group_id
+    idempotency.ts         deterministic event ids
+  google/                  the only code that talks to Google
+    auth.ts                service account JWT
+    calendar.ts            Calendar API v3 wrappers
+  service/
+    calendar-service.ts    every operation, shared by both transports
+    errors.ts              ApiError and its mapping to a status
+    alerts.ts              gossip-gate alerts
+  transport/
+    http.ts                REST routes and the /mcp mount point
+    mcp.ts                 MCP (JSON-RPC) and the role filter on tools/list
+test/                      mirrors src/
+deploy/                    systemd unit, nginx route, example registries
 ```
 
-Pure units, no network: id derivation, the principal registry, the guards,
-overlap and free-slot maths across a DST boundary, fan-out planning, and the MCP
-layer including the role filter on `tools/list`.
+Dependencies point inwards: `transport` calls `service`, `service` calls `core`
+and `google`, and `core` calls nothing. Only `main.ts` reads the environment or
+constructs anything, so every other module takes its collaborators as arguments.
+
+## Development
+
+```bash
+bun install          # dev tooling only: typescript and @types/bun
+bun run check        # typecheck + tests; run before every commit
+bun run dev          # watch mode
+```
+
+There are no runtime dependencies, and there should stay none: `bun install` on
+the server is not needed to run the service.
+
+The tests need no network and no credential. `core/` is tested as plain
+functions; `service/` runs full creates and updates against an in-memory fake of
+Google, covering the all-or-nothing fan-out, idempotent retries, conflicts,
+write caps and their refunds; `transport/` covers authentication, the audit of
+unauthenticated requests, and the MCP role filter.
 
 ## Setup
 

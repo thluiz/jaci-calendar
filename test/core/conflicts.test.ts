@@ -11,8 +11,8 @@ import {
   overlaps,
   subtractSpans,
   toSpan,
-} from "./conflicts"
-import type { BusyBlock, GoogleEvent } from "./types"
+} from "../../src/core/conflicts"
+import type { BusyBlock, GoogleEvent } from "../../src/types"
 
 const TZ = "America/Sao_Paulo"
 

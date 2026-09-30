@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { handleMCP, toolsFor, TOOLS, type Handlers } from "./mcp"
-import type { Principal } from "./types"
+import { handleMCP, toolsFor, TOOLS, type Handlers } from "../../src/transport/mcp"
+import type { Principal } from "../../src/types"
 
 const WRITER: Principal = { name: "claude-code-thiago", role: "write", calendars: ["thiago"] }
 const READER: Principal = { name: "openclaw", role: "read", calendars: ["familia"] }
@@ -72,7 +72,7 @@ describe("handleMCP", () => {
 
   test("initialize answers the protocol handshake", async () => {
     const res = await handleMCP(rpc("initialize"), READER, stubHandlers())
-    const body = await res.json()
+    const body = (await res.json()) as any
     expect(body.result.protocolVersion).toBe("2024-11-05")
     expect(body.result.serverInfo.name).toBe("calendar-gate")
   })
@@ -88,7 +88,7 @@ describe("handleMCP", () => {
       READER,
       stubHandlers({ createEvent: async () => ({ never: true }) })
     )
-    const body = await res.json()
+    const body = (await res.json()) as any
     expect(body.error.code).toBe(-32602)
     expect(body.error.message).toContain("read only")
   })
@@ -99,7 +99,7 @@ describe("handleMCP", () => {
       READER,
       stubHandlers()
     )
-    const body = await res.json()
+    const body = (await res.json()) as any
     expect(body.error.code).toBe(-32602)
     expect(body.error.message).toContain("time_max")
   })
@@ -117,7 +117,7 @@ describe("handleMCP", () => {
         },
       })
     )
-    const body = await res.json()
+    const body = (await res.json()) as any
     expect(body.error).toBeUndefined()
     expect(body.result.isError).toBe(true)
     const payload = JSON.parse(body.result.content[0].text)
@@ -131,13 +131,13 @@ describe("handleMCP", () => {
       WRITER,
       stubHandlers({ listCalendars: async () => ({ name: "claude-code-thiago", calendars: ["thiago"] }) })
     )
-    const body = await res.json()
+    const body = (await res.json()) as any
     expect(JSON.parse(body.result.content[0].text).name).toBe("claude-code-thiago")
   })
 
   test("an unknown tool is refused", async () => {
     const res = await handleMCP(rpc("tools/call", { name: "delete_event", arguments: {} }), WRITER, stubHandlers())
-    const body = await res.json()
+    const body = (await res.json()) as any
     expect(body.error.code).toBe(-32602)
   })
 
@@ -150,13 +150,13 @@ describe("handleMCP", () => {
         { jsonrpc: "2.0", id: 2, method: "tools/list" },
       ]),
     })
-    const body = await (await handleMCP(req, READER, stubHandlers())).json()
+    const body = (await (await handleMCP(req, READER, stubHandlers())).json()) as any
     expect(Array.isArray(body)).toBe(true)
     expect(body).toHaveLength(2)
   })
 
   test("an unknown method is -32601", async () => {
-    const body = await (await handleMCP(rpc("resources/list"), READER, stubHandlers())).json()
+    const body = (await (await handleMCP(rpc("resources/list"), READER, stubHandlers())).json()) as any
     expect(body.error.code).toBe(-32601)
   })
 
@@ -164,7 +164,7 @@ describe("handleMCP", () => {
     const req = new Request("http://localhost/mcp", { method: "POST", body: "{not json" })
     const res = await handleMCP(req, READER, stubHandlers())
     expect(res.status).toBe(400)
-    expect((await res.json()).error.code).toBe(-32700)
+    expect(((await res.json()) as any).error.code).toBe(-32700)
   })
 
   test("there is no tool that deletes anything", () => {

@@ -9,7 +9,7 @@ import {
   parseTimestamp,
   validateEventInput,
   WriteLimiter,
-} from "./policy"
+} from "../../src/core/policy"
 
 const DEFAULTS = { timezone: "America/Sao_Paulo" }
 const NOW = Date.parse("2026-08-30T12:00:00-03:00")

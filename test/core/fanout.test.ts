@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
-import { buildEventBody, buildPatchBody, planFanout, summarizeFanout, transparencyFor } from "./fanout"
-import { eventIdFor, groupIdFor, isValidEventId } from "./idempotency"
-import type { CalendarEntry, EventInput, FanoutResult } from "./types"
+import { buildEventBody, buildPatchBody, planFanout, summarizeFanout, transparencyFor } from "../../src/core/fanout"
+import { eventIdFor, groupIdFor, isValidEventId } from "../../src/core/idempotency"
+import type { CalendarEntry, EventInput, FanoutResult } from "../../src/types"
 
 const THIAGO: CalendarEntry = { alias: "thiago", id: "thiago@example.com", access: "details" }
 const THILIA: CalendarEntry = { alias: "thilia", id: "thilia@example.com", access: "details" }

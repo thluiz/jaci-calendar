@@ -63,6 +63,8 @@ Source lives on the Windows host at `E:\jaci-calendar\`; the service runs at
 `/home/hermes/services/calendar-gate/`.
 
 1. **Sync the source.** Windows to WSL goes through base64, per the house rule.
+   What runs is `src/` plus `package.json`; `test/` and `node_modules/` need not
+   go. The entrypoint is `src/main.ts`.
    `sa-key.json`, `principals.json` and `calendars.json` are created **inside**
    the distro with a heredoc, never through a pipe, then `chmod 600`.
 

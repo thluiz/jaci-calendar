@@ -28,42 +28,47 @@ export interface LogEntry {
   status: number
 }
 
-const LOG_DIR = join(import.meta.dir, "logs")
-const RETENTION_DAYS = parseInt(process.env.LOG_RETENTION_DAYS ?? "30")
-
-let lastCleanupDate = ""
-
-function todayStr(): string {
-  return new Date().toISOString().slice(0, 10)
+export interface AuditLog {
+  append(entry: LogEntry): Promise<void>
 }
 
-export async function appendLog(entry: LogEntry): Promise<void> {
-  try {
-    mkdirSync(LOG_DIR, { recursive: true })
+/**
+ * Where the trail lives and for how long come from the caller rather than from
+ * the environment, so a test can point it at a temporary directory.
+ */
+export function createAuditLog(opts: { dir: string; retentionDays: number }): AuditLog {
+  let lastCleanupDate = ""
 
-    const today = todayStr()
-    if (lastCleanupDate !== today) {
-      lastCleanupDate = today
-      cleanOldLogs()
-    }
+  return {
+    async append(entry) {
+      try {
+        mkdirSync(opts.dir, { recursive: true })
 
-    // Bun.write() silently ignores { append: true } and truncates the file,
-    // which in gossip-gate left only the day's last entry on disk.
-    await appendFile(join(LOG_DIR, `${today}.ndjson`), JSON.stringify(entry) + "\n", "utf8")
-  } catch (e) {
-    // An unwritable log must not take the service down, but it must be loud.
-    console.error(JSON.stringify({ ts: new Date().toISOString(), msg: "audit log write failed", error: String(e) }))
+        const today = new Date().toISOString().slice(0, 10)
+        if (lastCleanupDate !== today) {
+          lastCleanupDate = today
+          cleanOldLogs(opts.dir, opts.retentionDays)
+        }
+
+        // Bun.write() silently ignores { append: true } and truncates the file,
+        // which in gossip-gate left only the day's last entry on disk.
+        await appendFile(join(opts.dir, `${today}.ndjson`), JSON.stringify(entry) + "\n", "utf8")
+      } catch (e) {
+        // An unwritable log must not take the service down, but it must be loud.
+        console.error(JSON.stringify({ ts: new Date().toISOString(), msg: "audit log write failed", error: String(e) }))
+      }
+    },
   }
 }
 
-export function cleanOldLogs(): void {
-  if (!existsSync(LOG_DIR)) return
-  const cutoff = Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000
+export function cleanOldLogs(dir: string, retentionDays: number, now = Date.now()): void {
+  if (!existsSync(dir)) return
+  const cutoff = now - retentionDays * 24 * 60 * 60 * 1000
   try {
-    for (const file of readdirSync(LOG_DIR)) {
+    for (const file of readdirSync(dir)) {
       if (!file.endsWith(".ndjson")) continue
       const fileMs = new Date(file.replace(".ndjson", "")).getTime()
-      if (!isNaN(fileMs) && fileMs < cutoff) unlinkSync(join(LOG_DIR, file))
+      if (!isNaN(fileMs) && fileMs < cutoff) unlinkSync(join(dir, file))
     }
   } catch {
     // non-fatal
