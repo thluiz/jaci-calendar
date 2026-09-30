@@ -18,15 +18,7 @@ import {
 } from "../core/conflicts"
 import { buildEventBody, buildPatchBody, planFanout, summarizeFanout, transparencyFor } from "../core/fanout"
 import { randomIdempotencyKey } from "../core/idempotency"
-import {
-  checkDateGuard,
-  checkWritableAccess,
-  isViolation,
-  parseTimestamp,
-  validateEventInput,
-  type WriteLimiter,
-} from "../core/policy"
-import { isValidTimezone } from "../core/timezone"
+import { checkDateGuard, checkWritableAccess, type WriteLimiter } from "../core/policy"
 import type { Config } from "../config"
 import { AuthError } from "../google/auth"
 import { CalendarApiError, type CalendarClient } from "../google/calendar"
@@ -35,8 +27,14 @@ import { calendarsOf, canWrite, describePrincipal, resolveCalendar, type Registr
 import type { BusyBlock, CalendarEntry, EventInput, FanoutResult, Principal } from "../types"
 import type { Alerts } from "./alerts"
 import { ApiError } from "./errors"
-
-type Args = Record<string, unknown>
+import {
+  parseConflictCheck,
+  parseCreate,
+  parseFreeSlots,
+  parseSearch,
+  parseUpdate,
+  type Args,
+} from "./requests"
 
 /** What the transports call. One method per MCP tool / REST route. */
 export interface Handlers {
@@ -67,6 +65,7 @@ export interface ServiceDeps {
 
 export function createCalendarService(deps: ServiceDeps): Handlers {
   const now = deps.now ?? Date.now
+  const defaults = { timezone: deps.config.defaultTimezone }
 
   function requireWrite(principal: Principal): void {
     if (!canWrite(principal)) {
@@ -110,24 +109,6 @@ export function createCalendarService(deps: ServiceDeps): Handlers {
       out.push(cal)
     }
     return out
-  }
-
-  function requireWindow(body: Args): { timeMin: string; timeMax: string } {
-    const min = parseTimestamp(body.time_min, "time_min")
-    if (isViolation(min)) throw ApiError.from(min)
-    const max = parseTimestamp(body.time_max, "time_max")
-    if (isViolation(max)) throw ApiError.from(max)
-    if (max.ms <= min.ms) throw new ApiError("INVALID_INPUT", "time_max must be after time_min", 400)
-    if (max.ms - min.ms > 366 * 24 * 60 * 60 * 1000) {
-      throw new ApiError("INVALID_INPUT", "the window is longer than a year", 400)
-    }
-    return { timeMin: String(body.time_min), timeMax: String(body.time_max) }
-  }
-
-  function timezoneOf(body: Args): string {
-    const tz = typeof body.timezone === "string" && body.timezone.trim() ? body.timezone.trim() : deps.config.defaultTimezone
-    if (!isValidTimezone(tz)) throw new ApiError("INVALID_INPUT", `unknown timezone "${tz}"`, 400)
-    return tz
   }
 
   /**
@@ -203,11 +184,8 @@ export function createCalendarService(deps: ServiceDeps): Handlers {
    * unreachable is a worse answer than an error. The caller can accept the gap
    * explicitly with partial_ok.
    */
-  function assertComplete(
-    errors: Array<{ calendar: string; error: string }>,
-    body: Args
-  ): void {
-    if (!errors.length || body.partial_ok === true) return
+  function assertComplete(errors: Array<{ calendar: string; error: string }>, partialOk: boolean): void {
+    if (!errors.length || partialOk) return
     throw new ApiError(
       "CALENDAR_UNREADABLE",
       `could not read ${errors.map((e) => `"${e.calendar}"`).join(", ")}, so availability cannot be asserted. ` +
@@ -238,9 +216,7 @@ export function createCalendarService(deps: ServiceDeps): Handlers {
 
   async function opSearchEvents(principal: Principal, body: Args) {
     const calendars = resolveAll(principal, body.calendar_ids, { required: false })
-    const window = requireWindow(body)
-    const timezone = timezoneOf(body)
-    const query = typeof body.query === "string" && body.query.trim() ? body.query.trim() : undefined
+    const { window, timezone, query } = parseSearch(body, defaults)
 
     const { blocks, errors } = await collectBusy(calendars, window, timezone, { query, includeFree: true })
     return {
@@ -254,31 +230,19 @@ export function createCalendarService(deps: ServiceDeps): Handlers {
 
   async function opCheckConflicts(principal: Principal, body: Args) {
     const calendars = resolveAll(principal, body.calendar_ids, { required: false })
-    const timezone = timezoneOf(body)
+    const req = parseConflictCheck(body, defaults)
 
-    const start = parseTimestamp(body.start, "start")
-    if (isViolation(start)) throw ApiError.from(start)
-    const end = parseTimestamp(body.end, "end")
-    if (isViolation(end)) throw ApiError.from(end)
-    if (end.ms <= start.ms) throw new ApiError("INVALID_INPUT", "end must be after start", 400)
+    const { blocks, errors } = await collectBusy(calendars, { timeMin: req.start, timeMax: req.end }, req.timezone, {
+      ignoreEventId: req.ignoreEventId,
+      ignoreGroupId: req.ignoreGroupId,
+    })
+    assertComplete(errors, req.partialOk)
 
-    const { blocks, errors } = await collectBusy(
-      calendars,
-      { timeMin: String(body.start), timeMax: String(body.end) },
-      timezone,
-      {
-        ignoreEventId: typeof body.ignore_event_id === "string" ? body.ignore_event_id : undefined,
-        ignoreGroupId: typeof body.ignore_group_id === "string" ? body.ignore_group_id : undefined,
-      }
-    )
-
-    assertComplete(errors, body)
-
-    const hits = conflictsIn(blocks, { startMs: start.ms, endMs: end.ms })
+    const hits = conflictsIn(blocks, { startMs: req.startMs, endMs: req.endMs })
     return {
-      start: String(body.start),
-      end: String(body.end),
-      timezone,
+      start: req.start,
+      end: req.end,
+      timezone: req.timezone,
       conflict: hits.length > 0,
       conflicts: hits,
       calendars_checked: calendars.map((c) => ({ alias: c.alias, detail: c.access })),
@@ -288,51 +252,40 @@ export function createCalendarService(deps: ServiceDeps): Handlers {
 
   async function opFindFreeSlots(principal: Principal, body: Args) {
     const calendars = resolveAll(principal, body.calendar_ids, { required: false })
-    const window = requireWindow(body)
-    const timezone = timezoneOf(body)
+    const req = parseFreeSlots(body, defaults)
 
-    const duration = Number(body.duration_minutes ?? 60)
-    if (!Number.isFinite(duration) || duration <= 0 || duration > 24 * 60) {
-      throw new ApiError("INVALID_INPUT", "duration_minutes must be between 1 and 1440", 400)
-    }
-
-    const weekdays = Array.isArray(body.weekdays)
-      ? body.weekdays.map(Number).filter((n) => Number.isInteger(n) && n >= 0 && n <= 6)
-      : undefined
-
-    const { blocks: allBlocks, errors } = await collectBusy(calendars, window, timezone)
-    assertComplete(errors, body)
+    const { blocks: allBlocks, errors } = await collectBusy(calendars, req.window, req.timezone)
+    assertComplete(errors, req.partialOk)
 
     // An all-day event marked busy takes out every working hour it touches. That
     // is right for a holiday and wrong for a fair someone just wanted on the
     // calendar, and only the person can tell which: so name those events in the
     // answer instead of returning a bare empty list, and let the agent resend
     // with ignore_all_day once the person says they do not block anything.
-    const ignoreAllDay = body.ignore_all_day === true
     const allDayBlocks = allBlocks.filter((b) => b.all_day)
-    const blocks = ignoreAllDay ? allBlocks.filter((b) => !b.all_day) : allBlocks
+    const blocks = req.ignoreAllDay ? allBlocks.filter((b) => !b.all_day) : allBlocks
 
     const slots = findFreeSlots(blocks, {
-      windowStart: window.timeMin,
-      windowEnd: window.timeMax,
-      durationMinutes: duration,
-      timezone,
-      businessStart: typeof body.business_start === "string" ? body.business_start : undefined,
-      businessEnd: typeof body.business_end === "string" ? body.business_end : undefined,
-      weekdays,
+      windowStart: req.window.timeMin,
+      windowEnd: req.window.timeMax,
+      durationMinutes: req.durationMinutes,
+      timezone: req.timezone,
+      businessStart: req.businessStart,
+      businessEnd: req.businessEnd,
+      weekdays: req.weekdays,
       now: now(),
-      maxResults: Number(body.max_results ?? 20),
+      maxResults: req.maxResults,
     })
 
     return {
-      timezone,
-      duration_minutes: duration,
+      timezone: req.timezone,
+      duration_minutes: req.durationMinutes,
       calendars_checked: calendars.map((c) => c.alias),
       slots,
       ...(allDayBlocks.length
         ? {
             all_day_blocks: allDayBlocks,
-            note: ignoreAllDay
+            note: req.ignoreAllDay
               ? "all-day events were ignored as requested; the slots above disregard them."
               : "these all-day events are marked busy and were treated as blocking every working hour of their days. " +
                 "If one does not actually keep the person from meeting (a fair, a trip of someone else, a reminder), " +
@@ -360,11 +313,11 @@ export function createCalendarService(deps: ServiceDeps): Handlers {
     throw error
   }
 
-  function guardDate(start: string, body: Args): void {
+  function guardDate(start: string, allowPast: boolean): void {
     const denied = checkDateGuard(start, {
       maxPastHours: deps.config.maxPastHours,
       maxFutureDays: deps.config.maxFutureDays,
-      allowPast: body.allow_past === true,
+      allowPast,
       now: now(),
     })
     if (denied) throw ApiError.from(denied)
@@ -380,12 +333,12 @@ export function createCalendarService(deps: ServiceDeps): Handlers {
     operation: string,
     calendars: CalendarEntry[],
     input: EventInput,
-    opts: { groupId: string; body: Args; audit: AuditExtra; message: string }
+    opts: { groupId: string; partialOk: boolean; audit: AuditExtra; message: string }
   ): Promise<void> {
     const window = eventWindow(input)
     const { blocks, errors } = await collectBusy(calendars, window, input.timezone, { ignoreGroupId: opts.groupId })
     // Writing after a failed conflict check would be scheduling blind.
-    assertComplete(errors, opts.body)
+    assertComplete(errors, opts.partialOk)
     const conflicts = conflictsIn(blocks, toSpan({ start: window.timeMin, end: window.timeMax }))
     if (conflicts.length) {
       await refuse(principal, operation, new ApiError("CONFLICT", opts.message, 409, { conflicts }), opts.audit)
@@ -430,25 +383,19 @@ export function createCalendarService(deps: ServiceDeps): Handlers {
       if (denied) throw ApiError.from(denied)
     }
 
-    const input = validateEventInput(body, { timezone: deps.config.defaultTimezone })
-    if (isViolation(input)) throw ApiError.from(input)
-    if (!isValidTimezone(input.timezone)) {
-      throw new ApiError("INVALID_INPUT", `unknown timezone "${input.timezone}"`, 400)
-    }
-    guardDate(input.start, body)
+    const req = parseCreate(body, defaults)
+    const input = req.event
+    guardDate(input.start, req.allowPast)
 
-    const idempotencyKey =
-      typeof body.idempotency_key === "string" && body.idempotency_key.trim()
-        ? body.idempotency_key.trim()
-        : randomIdempotencyKey()
+    const idempotencyKey = req.idempotencyKey ?? randomIdempotencyKey()
     const plan = planFanout(calendars, idempotencyKey)
     const auditExtra = { calendars: calendars.map((c) => c.alias), group_id: plan.groupId }
 
     // An event shown as free takes nobody's time, so it is not checked at all.
-    if (body.allow_conflict !== true && transparencyFor(input) === "opaque") {
+    if (!req.allowConflict && transparencyFor(input) === "opaque") {
       await refuseConflicts(principal, "create_event", calendars, input, {
         groupId: plan.groupId,
-        body,
+        partialOk: req.partialOk,
         audit: auditExtra,
         message: "the requested time overlaps existing events. Send allow_conflict: true to schedule anyway.",
       })
@@ -456,7 +403,7 @@ export function createCalendarService(deps: ServiceDeps): Handlers {
 
     await chargeWrites(principal, "create_event", plan.targets.length, auditExtra)
 
-    if (body.dry_run === true) {
+    if (req.dryRun) {
       deps.limiter.refund(plan.targets.length)
       await audit(principal, "create_event", "dry_run", 200, auditExtra)
       return {
@@ -511,11 +458,11 @@ export function createCalendarService(deps: ServiceDeps): Handlers {
       throw new ApiError("NO_WRITABLE_CALENDAR", "this principal reaches no writable calendar", 403)
     }
 
-    const input = validateEventInput(body, { timezone: deps.config.defaultTimezone }, { requireTimes: false })
-    if (isViolation(input)) throw ApiError.from(input)
+    const req = parseUpdate(body, defaults)
+    const input = req.event
 
     const movingTimes = Boolean(input.start && input.end)
-    if (movingTimes) guardDate(input.start, body)
+    if (movingTimes) guardDate(input.start, req.allowPast)
 
     // Locate the copies first: an update that matches nothing is a 404, not a
     // silent success.
@@ -544,10 +491,10 @@ export function createCalendarService(deps: ServiceDeps): Handlers {
 
     // Free after the update, whether asked now or already so: nothing to collide.
     const staysFree = input.show_as ? input.show_as === "free" : found.every((f) => f.free)
-    if (movingTimes && body.allow_conflict !== true && !staysFree) {
+    if (movingTimes && !req.allowConflict && !staysFree) {
       await refuseConflicts(principal, "update_event", calendars, input, {
         groupId,
-        body,
+        partialOk: req.partialOk,
         audit: { group_id: groupId },
         message: "the new time overlaps existing events. Send allow_conflict: true to move it anyway.",
       })
@@ -560,7 +507,7 @@ export function createCalendarService(deps: ServiceDeps): Handlers {
 
     await chargeWrites(principal, "update_event", found.length, { group_id: groupId })
 
-    if (body.dry_run === true) {
+    if (req.dryRun) {
       deps.limiter.refund(found.length)
       return {
         dry_run: true,

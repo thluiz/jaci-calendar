@@ -112,6 +112,16 @@ First implementation, from the plan of 2026-08-29 (service account revision).
   all-or-nothing fan-out, idempotent retries, conflicts, write caps with their
   refunds and alert, dry runs, the date guard and group updates, and for the
   HTTP layer. 128 tests before, 151 after.
+- `create_event` and `update_event` share their write steps (date guard,
+  conflict check, write cap, fan-out with refunds) instead of repeating them,
+  and each refusal is audited in one place. `scheduled_over` is gone from the
+  create answer: it could never be set, since conflicts on that path always
+  ended in a 409. The write-limit alert on update now carries the limit code.
+- Request arguments are parsed once into typed requests
+  (`src/service/requests.ts`) instead of being read field by field from the raw
+  body inside each operation. Authorization still runs first: a read principal
+  or a denied calendar is reported as such even when the payload is also
+  invalid, which is pinned by a test. 176 tests.
 
 **Upgrading an existing deploy:** the systemd unit now starts
 `bun run src/main.ts`. Copy `deploy/calendar-gate.service` to

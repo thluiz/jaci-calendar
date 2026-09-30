@@ -399,6 +399,28 @@ describe("update_event", () => {
   })
 })
 
+describe("authorization comes before validation", () => {
+  // A denial must show up as a denial in the audit trail even when the rest of
+  // the request is also wrong: that is how a probe of the allowlist is seen.
+  const BROKEN = { summary: "", start: "tomorrow" }
+
+  test("a read principal is told so, not that its payload is invalid", async () => {
+    const { service } = setup()
+    const err = await rejection(service.createEvent(READER, { ...BROKEN, calendar_ids: ["ana"] }))
+    expect(err.code).toBe("READ_ONLY_PRINCIPAL")
+  })
+
+  test("a denied calendar is reported before a broken payload", async () => {
+    const { service } = setup()
+    expect((await rejection(service.createEvent(WRITER, { ...BROKEN, calendar_ids: ["stranger"] }))).code).toBe(
+      "CALENDAR_DENIED"
+    )
+    expect(
+      (await rejection(service.searchEvents(WRITER, { calendar_ids: ["stranger"], time_min: "x" }))).code
+    ).toBe("CALENDAR_DENIED")
+  })
+})
+
 describe("create_event audit", () => {
   test("a success is audited with the calendars, group and event ids", async () => {
     const { service, entries } = setup()

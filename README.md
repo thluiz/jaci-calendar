@@ -174,6 +174,7 @@ src/
     calendar.ts            Calendar API v3 wrappers
   service/
     calendar-service.ts    every operation, shared by both transports
+    requests.ts            raw JSON arguments to typed requests
     errors.ts              ApiError and its mapping to a status
     alerts.ts              gossip-gate alerts
   transport/
