@@ -57,6 +57,12 @@ export interface BusyFilterOptions {
   ignoreEventId?: string
   /** group_id to skip, which is the same idea across the copies of a fan-out. */
   ignoreGroupId?: string
+  /**
+   * Keep events marked free. A conflict check must drop them, but an agenda
+   * listing must not: all-day events are marked free precisely so they stop
+   * blocking slots, and they are still on the agenda.
+   */
+  includeFree?: boolean
 }
 
 /** True when this event should count as busy time. */
@@ -65,7 +71,7 @@ export function isBlocking(event: GoogleEvent, opts: BusyFilterOptions = {}): bo
   // "transparent" is Google's word for "show me as available" — the owner said
   // it is not a commitment. The Calendar UI creates all-day events that way, but
   // the API defaults everything to opaque, so an all-day event can well be busy.
-  if (event.transparency === "transparent") return false
+  if (event.transparency === "transparent" && !opts.includeFree) return false
   if (event.eventType && NON_BLOCKING_EVENT_TYPES.has(event.eventType)) return false
   if (event.attendees?.some((a) => a.self && a.responseStatus === "declined")) return false
   if (opts.ignoreEventId && event.id === opts.ignoreEventId) return false
@@ -98,6 +104,7 @@ export function busyFromEvents(
         : {}),
       ...(event.summary ? { summary: event.summary } : {}),
       ...(event.start?.date ? { all_day: true } : {}),
+      ...(event.transparency === "transparent" ? { show_as: "free" as const } : {}),
     })
   }
   return out.sort((a, b) => a.start.localeCompare(b.start))

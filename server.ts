@@ -188,7 +188,7 @@ async function collectBusy(
   calendars: CalendarEntry[],
   window: { timeMin: string; timeMax: string },
   timezone: string,
-  opts: { ignoreEventId?: string; ignoreGroupId?: string; query?: string } = {}
+  opts: { ignoreEventId?: string; ignoreGroupId?: string; query?: string; includeFree?: boolean } = {}
 ): Promise<{ blocks: BusyBlock[]; errors: Array<{ calendar: string; error: string }> }> {
   const blocks: BusyBlock[] = []
   const errors: Array<{ calendar: string; error: string }> = []
@@ -311,7 +311,7 @@ async function opSearchEvents(principal: Principal, body: Record<string, unknown
   const timezone = timezoneOf(body)
   const query = typeof body.query === "string" && body.query.trim() ? body.query.trim() : undefined
 
-  const { blocks, errors } = await collectBusy(calendars, window, timezone, { query })
+  const { blocks, errors } = await collectBusy(calendars, window, timezone, { query, includeFree: true })
   return {
     time_min: window.timeMin,
     time_max: window.timeMax,
