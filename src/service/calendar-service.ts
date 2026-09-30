@@ -32,7 +32,7 @@ import { AuthError } from "../google/auth"
 import { CalendarApiError, type CalendarClient } from "../google/calendar"
 import type { AuditLog } from "../logger"
 import { calendarsOf, canWrite, describePrincipal, resolveCalendar, type Registry } from "../principals"
-import type { BusyBlock, CalendarEntry, FanoutResult, Principal } from "../types"
+import type { BusyBlock, CalendarEntry, EventInput, FanoutResult, Principal } from "../types"
 import type { Alerts } from "./alerts"
 import { ApiError } from "./errors"
 
@@ -343,6 +343,83 @@ export function createCalendarService(deps: ServiceDeps): Handlers {
     }
   }
 
+  // ─────────────────────────────────────────────────────────────── write steps
+  //
+  // create_event and update_event run the same gauntlet — date guard, conflict
+  // check, write cap, fan-out with refunds — and each step lives once, here.
+
+  type AuditExtra = { calendars?: string[]; group_id?: string }
+
+  /**
+   * Audits a refusal with the context only a write path has (the calendars, the
+   * group), then marks it so run() does not log it a second time.
+   */
+  async function refuse(principal: Principal, operation: string, error: ApiError, extra: AuditExtra): Promise<never> {
+    await audit(principal, operation, "denied", error.status, { ...extra, reason: error.code })
+    error.audited = true
+    throw error
+  }
+
+  function guardDate(start: string, body: Args): void {
+    const denied = checkDateGuard(start, {
+      maxPastHours: deps.config.maxPastHours,
+      maxFutureDays: deps.config.maxFutureDays,
+      allowPast: body.allow_past === true,
+      now: now(),
+    })
+    if (denied) throw ApiError.from(denied)
+  }
+
+  /**
+   * Refuses with 409 when the event would overlap something. Checked against
+   * the same calendars the event lands on, ignoring the event's own copies, so
+   * a retry or a small shift does not collide with itself.
+   */
+  async function refuseConflicts(
+    principal: Principal,
+    operation: string,
+    calendars: CalendarEntry[],
+    input: EventInput,
+    opts: { groupId: string; body: Args; audit: AuditExtra; message: string }
+  ): Promise<void> {
+    const window = eventWindow(input)
+    const { blocks, errors } = await collectBusy(calendars, window, input.timezone, { ignoreGroupId: opts.groupId })
+    // Writing after a failed conflict check would be scheduling blind.
+    assertComplete(errors, opts.body)
+    const conflicts = conflictsIn(blocks, toSpan({ start: window.timeMin, end: window.timeMax }))
+    if (conflicts.length) {
+      await refuse(principal, operation, new ApiError("CONFLICT", opts.message, 409, { conflicts }), opts.audit)
+    }
+  }
+
+  /** Charges the write cap. A fan-out costs one write per copy. */
+  async function chargeWrites(principal: Principal, operation: string, cost: number, extra: AuditExtra): Promise<void> {
+    const decision = deps.limiter.consume(cost, now())
+    if (decision.allowed) return
+    if (decision.firstBreach) {
+      void deps.alerts.notify(
+        `calendar-gate: write limit hit by "${principal.name}" on ${operation} (${decision.violation?.code}). ` +
+          "Nothing was written. An agent may be looping."
+      )
+    }
+    await refuse(principal, operation, ApiError.from(decision.violation!), extra)
+  }
+
+  /**
+   * One write per copy, in order, each failure caught and reported rather than
+   * aborting the rest. The copies that failed wrote nothing, so they go back to
+   * the cap.
+   */
+  async function writeEach<T>(items: T[], write: (item: T) => Promise<FanoutResult>): Promise<FanoutResult[]> {
+    const results: FanoutResult[] = []
+    for (const item of items) results.push(await write(item))
+    const failed = results.filter((r) => !r.ok).length
+    if (failed) deps.limiter.refund(failed)
+    return results
+  }
+
+  // ─────────────────────────────────────────────────────────── write operations
+
   async function opCreateEvent(principal: Principal, body: Args) {
     requireWrite(principal)
 
@@ -358,75 +435,30 @@ export function createCalendarService(deps: ServiceDeps): Handlers {
     if (!isValidTimezone(input.timezone)) {
       throw new ApiError("INVALID_INPUT", `unknown timezone "${input.timezone}"`, 400)
     }
-
-    const dateDenied = checkDateGuard(input.start, {
-      maxPastHours: deps.config.maxPastHours,
-      maxFutureDays: deps.config.maxFutureDays,
-      allowPast: body.allow_past === true,
-      now: now(),
-    })
-    if (dateDenied) throw ApiError.from(dateDenied)
+    guardDate(input.start, body)
 
     const idempotencyKey =
       typeof body.idempotency_key === "string" && body.idempotency_key.trim()
         ? body.idempotency_key.trim()
         : randomIdempotencyKey()
     const plan = planFanout(calendars, idempotencyKey)
+    const auditExtra = { calendars: calendars.map((c) => c.alias), group_id: plan.groupId }
 
-    // Conflicts are checked against the same calendars the event would land on,
-    // ignoring this event's own copies so that a retry does not collide with what
-    // it already created. An event shown as free takes nobody's time, so it is
-    // not checked at all.
-    let conflicts: BusyBlock[] = []
+    // An event shown as free takes nobody's time, so it is not checked at all.
     if (body.allow_conflict !== true && transparencyFor(input) === "opaque") {
-      const window = eventWindow(input)
-      const { blocks, errors } = await collectBusy(calendars, window, input.timezone, {
-        ignoreGroupId: plan.groupId,
+      await refuseConflicts(principal, "create_event", calendars, input, {
+        groupId: plan.groupId,
+        body,
+        audit: auditExtra,
+        message: "the requested time overlaps existing events. Send allow_conflict: true to schedule anyway.",
       })
-      // Writing after a failed conflict check would be scheduling blind.
-      assertComplete(errors, body)
-      conflicts = conflictsIn(blocks, toSpan({ start: window.timeMin, end: window.timeMax }))
-      if (conflicts.length) {
-        await audit(principal, "create_event", "denied", 409, {
-          calendars: calendars.map((c) => c.alias),
-          group_id: plan.groupId,
-          reason: "CONFLICT",
-        })
-        const conflictError = new ApiError(
-          "CONFLICT",
-          "the requested time overlaps existing events. Send allow_conflict: true to schedule anyway.",
-          409,
-          { conflicts }
-        )
-        conflictError.audited = true
-        throw conflictError
-      }
     }
 
-    const dryRun = body.dry_run === true
-    const decision = deps.limiter.consume(plan.targets.length, now())
-    if (!decision.allowed) {
-      if (decision.firstBreach) {
-        void deps.alerts.notify(
-          `calendar-gate: write limit hit by "${principal.name}" (${decision.violation?.code}). ` +
-            "Nothing was written. An agent may be looping."
-        )
-      }
-      await audit(principal, "create_event", "denied", 429, {
-        calendars: calendars.map((c) => c.alias),
-        reason: decision.violation?.code,
-      })
-      const limitError = ApiError.from(decision.violation!)
-      limitError.audited = true
-      throw limitError
-    }
+    await chargeWrites(principal, "create_event", plan.targets.length, auditExtra)
 
-    if (dryRun) {
+    if (body.dry_run === true) {
       deps.limiter.refund(plan.targets.length)
-      await audit(principal, "create_event", "dry_run", 200, {
-        calendars: calendars.map((c) => c.alias),
-        group_id: plan.groupId,
-      })
+      await audit(principal, "create_event", "dry_run", 200, auditExtra)
       return {
         dry_run: true,
         group_id: plan.groupId,
@@ -437,56 +469,35 @@ export function createCalendarService(deps: ServiceDeps): Handlers {
     }
 
     const eventBody = buildEventBody(input, plan.groupId, { created_by: principal.name })
-    const results: FanoutResult[] = []
-
-    for (const target of plan.targets) {
+    const results = await writeEach(plan.targets, async (target) => {
+      const where = { calendar: target.alias, calendar_id: target.calendarId }
       try {
         const created = await deps.calendar.insertEvent(target.calendarId, target.eventId, eventBody)
-        results.push({
-          calendar: target.alias,
-          calendar_id: target.calendarId,
+        return {
+          ...where,
           ok: true,
           created: true,
           event_id: created.id ?? target.eventId,
           ...(created.htmlLink ? { html_link: created.htmlLink } : {}),
-        })
-      } catch (e) {
-        if (e instanceof CalendarApiError && e.isAlreadyExists) {
-          // The retry case: the id is derived from the idempotency key, so this
-          // is our own earlier write, not someone else's event.
-          results.push({
-            calendar: target.alias,
-            calendar_id: target.calendarId,
-            ok: true,
-            created: false,
-            event_id: target.eventId,
-          })
-          continue
         }
-        results.push({
-          calendar: target.alias,
-          calendar_id: target.calendarId,
-          ok: false,
-          error: describeCalendarError(e, { alias: target.alias, id: target.calendarId, access: "details" }),
-        })
+      } catch (e) {
+        // The retry case: the id is derived from the idempotency key, so a 409
+        // is our own earlier write, not someone else's event.
+        if (e instanceof CalendarApiError && e.isAlreadyExists) {
+          return { ...where, ok: true, created: false, event_id: target.eventId }
+        }
+        const cal: CalendarEntry = { alias: target.alias, id: target.calendarId, access: "details" }
+        return { ...where, ok: false, error: describeCalendarError(e, cal) }
       }
-    }
+    })
 
     const summary = summarizeFanout(plan.groupId, results)
-    const failed = results.filter((r) => !r.ok).length
-    if (failed) deps.limiter.refund(failed)
-
     await audit(principal, "create_event", summary.ok ? "ok" : "error", summary.status, {
-      calendars: calendars.map((c) => c.alias),
-      group_id: plan.groupId,
+      ...auditExtra,
       event_ids: results.filter((r) => r.event_id).map((r) => r.event_id!),
     })
 
-    return {
-      ...summary,
-      idempotency_key: idempotencyKey,
-      ...(conflicts.length ? { scheduled_over: conflicts } : {}),
-    }
+    return { ...summary, idempotency_key: idempotencyKey }
   }
 
   async function opUpdateEvent(principal: Principal, groupId: string, body: Args) {
@@ -504,15 +515,7 @@ export function createCalendarService(deps: ServiceDeps): Handlers {
     if (isViolation(input)) throw ApiError.from(input)
 
     const movingTimes = Boolean(input.start && input.end)
-    if (movingTimes) {
-      const dateDenied = checkDateGuard(input.start, {
-        maxPastHours: deps.config.maxPastHours,
-        maxFutureDays: deps.config.maxFutureDays,
-        allowPast: body.allow_past === true,
-        now: now(),
-      })
-      if (dateDenied) throw ApiError.from(dateDenied)
-    }
+    if (movingTimes) guardDate(input.start, body)
 
     // Locate the copies first: an update that matches nothing is a 404, not a
     // silent success.
@@ -542,23 +545,12 @@ export function createCalendarService(deps: ServiceDeps): Handlers {
     // Free after the update, whether asked now or already so: nothing to collide.
     const staysFree = input.show_as ? input.show_as === "free" : found.every((f) => f.free)
     if (movingTimes && body.allow_conflict !== true && !staysFree) {
-      const window = eventWindow(input)
-      const { blocks, errors: readErrors } = await collectBusy(calendars, window, input.timezone, {
-        ignoreGroupId: groupId,
+      await refuseConflicts(principal, "update_event", calendars, input, {
+        groupId,
+        body,
+        audit: { group_id: groupId },
+        message: "the new time overlaps existing events. Send allow_conflict: true to move it anyway.",
       })
-      assertComplete(readErrors, body)
-      const hits = conflictsIn(blocks, toSpan({ start: window.timeMin, end: window.timeMax }))
-      if (hits.length) {
-        await audit(principal, "update_event", "denied", 409, { group_id: groupId, reason: "CONFLICT" })
-        const conflictError = new ApiError(
-          "CONFLICT",
-          "the new time overlaps existing events. Send allow_conflict: true to move it anyway.",
-          409,
-          { conflicts: hits }
-        )
-        conflictError.audited = true
-        throw conflictError
-      }
     }
 
     const patch = buildPatchBody(input)
@@ -566,16 +558,7 @@ export function createCalendarService(deps: ServiceDeps): Handlers {
       throw new ApiError("INVALID_INPUT", "nothing to update: send summary, description, location, show_as or start+end", 400)
     }
 
-    const decision = deps.limiter.consume(found.length, now())
-    if (!decision.allowed) {
-      if (decision.firstBreach) {
-        void deps.alerts.notify(`calendar-gate: write limit hit by "${principal.name}" on update. Nothing was written.`)
-      }
-      await audit(principal, "update_event", "denied", 429, { group_id: groupId, reason: decision.violation?.code })
-      const limitError = ApiError.from(decision.violation!)
-      limitError.audited = true
-      throw limitError
-    }
+    await chargeWrites(principal, "update_event", found.length, { group_id: groupId })
 
     if (body.dry_run === true) {
       deps.limiter.refund(found.length)
@@ -587,44 +570,26 @@ export function createCalendarService(deps: ServiceDeps): Handlers {
       }
     }
 
-    const results: FanoutResult[] = []
-    for (const { cal, eventId } of found) {
+    const results = await writeEach(found, async ({ cal, eventId }) => {
+      const where = { calendar: cal.alias, calendar_id: cal.id, event_id: eventId }
       try {
         const updated = await deps.calendar.patchEvent(cal.id, eventId, patch)
-        results.push({
-          calendar: cal.alias,
-          calendar_id: cal.id,
-          ok: true,
-          updated: true,
-          event_id: eventId,
-          ...(updated.htmlLink ? { html_link: updated.htmlLink } : {}),
-        })
+        return { ...where, ok: true, updated: true, ...(updated.htmlLink ? { html_link: updated.htmlLink } : {}) }
       } catch (e) {
-        results.push({
-          calendar: cal.alias,
-          calendar_id: cal.id,
-          ok: false,
-          event_id: eventId,
-          error: describeCalendarError(e, cal),
-        })
+        return { ...where, ok: false, error: describeCalendarError(e, cal) }
       }
-    }
+    })
 
-    const failed = results.filter((r) => !r.ok).length
-    if (failed) deps.limiter.refund(failed)
-
+    // A full success answers 200 here, where create answers 201.
     const summary = summarizeFanout(groupId, results)
-    await audit(principal, "update_event", summary.ok ? "ok" : "error", summary.ok ? 200 : summary.status, {
+    const status = summary.ok ? 200 : summary.status
+    await audit(principal, "update_event", summary.ok ? "ok" : "error", status, {
       calendars: [...new Set(results.map((r) => r.calendar))],
       group_id: groupId,
       event_ids: results.map((r) => r.event_id!).filter(Boolean),
     })
 
-    return {
-      ...summary,
-      status: summary.ok ? 200 : summary.status,
-      ...(errors.length ? { calendar_errors: errors } : {}),
-    }
+    return { ...summary, status, ...(errors.length ? { calendar_errors: errors } : {}) }
   }
 
   async function audit(
